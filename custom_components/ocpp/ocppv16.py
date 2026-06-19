@@ -55,6 +55,10 @@ from .enums import (
 from .const import (
     CentralSystemSettings,
     ChargerSystemSettings,
+    DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
+    DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
+    DEFAULT_CHARGE_RATE_TOLERANCE,
+    DEFAULT_ENFORCE_CHARGE_RATE,
     DEFAULT_MEASURAND,
     HA_ENERGY_UNIT,
     MEASURANDS,
@@ -412,8 +416,40 @@ class ChargePoint(cp):
         limit_watts: int = 22000,
         conn_id: int = 0,
         profile: dict | None = None,
+        enforce: bool = DEFAULT_ENFORCE_CHARGE_RATE,
+        tolerance_amps: float = DEFAULT_CHARGE_RATE_TOLERANCE,
+        stability_samples: int = DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
+        min_update_interval: int = DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
     ) -> bool:
         """Set charge rate."""
+        if enforce and profile is None:
+            return await self._start_charge_rate_enforcement(
+                limit_amps=limit_amps,
+                limit_watts=limit_watts,
+                conn_id=conn_id,
+                profile=profile,
+                tolerance_amps=tolerance_amps,
+                stability_samples=stability_samples,
+                min_update_interval=min_update_interval,
+                send_once=self._send_charge_rate_once,
+            )
+
+        self.cancel_charge_rate_enforcement(conn_id)
+        return await self._send_charge_rate_once(
+            limit_amps=limit_amps,
+            limit_watts=limit_watts,
+            conn_id=conn_id,
+            profile=profile,
+        )
+
+    async def _send_charge_rate_once(
+        self,
+        limit_amps: int = 32,
+        limit_watts: int = 22000,
+        conn_id: int = 0,
+        profile: dict | None = None,
+    ) -> bool:
+        """Send one SetChargingProfile sequence."""
         if profile is not None:
             try:
                 req = call.SetChargingProfile(

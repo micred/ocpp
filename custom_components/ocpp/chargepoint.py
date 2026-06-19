@@ -3,7 +3,8 @@
 import asyncio
 from collections import defaultdict
 from collections.abc import MutableMapping
-from dataclasses import dataclass
+import contextlib
+from dataclasses import dataclass, field
 from enum import Enum
 import logging
 from math import sqrt
@@ -56,6 +57,9 @@ from .const import (
     CONF_CPIDS,
     CONFIG,
     DATA_UPDATED,
+    DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
+    DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
+    DEFAULT_CHARGE_RATE_TOLERANCE,
     DEFAULT_ENERGY_UNIT,
     DEFAULT_NUM_CONNECTORS,
     DEFAULT_POWER_UNIT,
@@ -68,6 +72,8 @@ from .const import (
 
 TIME_MINUTES = UnitOfTime.MINUTES
 _LOGGER: logging.Logger = logging.getLogger(__package__)
+CHARGE_RATE_ENFORCEMENT_ATTR = "charge_rate_enforcement"
+CHARGE_RATE_ENFORCEMENT_SLEEP = 10
 
 
 class Metric:
@@ -221,6 +227,28 @@ class MeasurandValue:
     location: str | None
 
 
+@dataclass
+class ChargeRateEnforcementState:
+    """Runtime state for closed-loop charge-rate enforcement."""
+
+    target_amps: float | None = None
+    limit_watts: int = 22000
+    conn_id: int = 1
+    profile: dict | None = None
+    tolerance_amps: float = DEFAULT_CHARGE_RATE_TOLERANCE
+    stability_samples: int = DEFAULT_CHARGE_RATE_STABILITY_SAMPLES
+    min_update_interval: int = DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL
+    last_sent_amps: float | None = None
+    last_send_ts: float = 0.0
+    task: asyncio.Task | None = None
+    backoff: float = 1.0
+    samples: list[float] = field(default_factory=list)
+    stable_count: int = 0
+    last_status: str = "idle"
+    last_reconnects: int = 0
+    last_boot_generation: int = 0
+
+
 class ChargePoint(cp):
     """Server side representation of a charger."""
 
@@ -270,6 +298,8 @@ class ChargePoint(cp):
         self.post_connect_success = False
         self.tasks = None
         self._charger_reports_session_energy = False
+        self._charge_rate_enforcement: dict[int, ChargeRateEnforcementState] = {}
+        self._charge_rate_boot_generation = 0
 
         # Connector-aware, but backwards compatible:
         self._metrics: _ConnectorAwareMetrics = _ConnectorAwareMetrics()
@@ -406,9 +436,343 @@ class ChargePoint(cp):
         limit_watts: int = 22000,
         conn_id: int = 0,
         profile: dict | None = None,
+        enforce: bool = False,
+        tolerance_amps: float = DEFAULT_CHARGE_RATE_TOLERANCE,
+        stability_samples: int = DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
+        min_update_interval: int = DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
     ):
         """Set a charging profile with defined limit."""
         pass
+
+    def _target_connector_id(self, conn_id: int | None) -> int:
+        """Resolve connector 0/None to the connector affected by rate limits."""
+        try:
+            conn = int(conn_id or 0)
+        except Exception:
+            conn = 0
+        return conn if conn > 0 else 1
+
+    def _get_charge_rate_enforcement_state(
+        self, conn_id: int
+    ) -> ChargeRateEnforcementState:
+        """Return enforcement state for a connector, creating it if needed."""
+        conn = self._target_connector_id(conn_id)
+        if not hasattr(self, "_charge_rate_enforcement"):
+            self._charge_rate_enforcement = {}
+        if conn not in self._charge_rate_enforcement:
+            self._charge_rate_enforcement[conn] = ChargeRateEnforcementState(
+                conn_id=conn,
+                last_reconnects=self._charge_rate_reconnect_count(),
+                last_boot_generation=getattr(self, "_charge_rate_boot_generation", 0),
+            )
+        return self._charge_rate_enforcement[conn]
+
+    async def _cancel_charge_rate_enforcement_state(
+        self, state: ChargeRateEnforcementState
+    ) -> None:
+        """Cancel one enforcement task and wait for cancellation to settle."""
+        task = state.task
+        if task is None or task.done():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    def cancel_charge_rate_enforcement(self, conn_id: int | None = None) -> None:
+        """Cancel enforcement tasks, optionally for a single connector."""
+        states = getattr(self, "_charge_rate_enforcement", {})
+        if conn_id is None:
+            selected = list(states.values())
+        else:
+            selected = [states.get(self._target_connector_id(conn_id))]
+
+        for state in selected:
+            if state is None:
+                continue
+            if state.task is not None and not state.task.done():
+                state.task.cancel()
+            state.task = None
+            state.last_status = "cancelled"
+
+    def _coerce_current_sample(self, value) -> float | None:
+        """Return numeric metric values; ignore unavailable/non-numeric samples."""
+        if value in (None, "", STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        if isinstance(value, str) and value.strip().lower() in {
+            "unknown",
+            "unavailable",
+        }:
+            return None
+        try:
+            sample = float(value)
+        except (TypeError, ValueError):
+            return None
+        if sample != sample:
+            return None
+        return sample
+
+    def _metric_value_and_unit(
+        self, conn_id: int, measurand: str
+    ) -> tuple[float | None, str | None]:
+        """Read a connector-aware metric with legacy fallbacks."""
+        conn = self._target_connector_id(conn_id)
+        candidates = [(conn, measurand), (0, measurand), measurand]
+        if conn != 1:
+            candidates.append((1, measurand))
+
+        for key in candidates:
+            try:
+                metric = self._metrics.get(key)
+            except Exception:
+                metric = None
+            if metric is None:
+                continue
+            sample = self._coerce_current_sample(getattr(metric, "value", None))
+            if sample is not None:
+                return sample, getattr(metric, "unit", None)
+        return None, None
+
+    def _measure_current_amps(self, conn_id: int) -> float | None:
+        """Measure current, preferring Current.Import over power / voltage."""
+        current, _unit = self._metric_value_and_unit(
+            conn_id, Measurand.current_import.value
+        )
+        if current is not None:
+            return current
+
+        power, power_unit = self._metric_value_and_unit(
+            conn_id, Measurand.power_active_import.value
+        )
+        voltage, _voltage_unit = self._metric_value_and_unit(
+            conn_id, Measurand.voltage.value
+        )
+        if power is None or voltage in (None, 0):
+            return None
+
+        unit = str(power_unit or "").lower()
+        power_watts = power * 1000 if unit == "kw" else power
+        return power_watts / voltage
+
+    def _charge_rate_reconnect_count(self) -> int:
+        """Return the last recorded reconnect count."""
+        try:
+            return int(self._metrics[(0, cstat.reconnects.value)].value or 0)
+        except Exception:
+            return 0
+
+    def _charge_rate_enforcement_connected(self) -> bool:
+        """Return whether enforcement may send OCPP calls now."""
+        if getattr(self, "status", None) != STATE_OK:
+            return False
+        if not getattr(self, "post_connect_success", False):
+            return False
+        connection = getattr(self, "_connection", None)
+        if connection is None:
+            return True
+        return getattr(connection, "state", State.OPEN) is State.OPEN
+
+    def _charge_rate_stats(
+        self, state: ChargeRateEnforcementState
+    ) -> dict[str, float | int | str | None]:
+        """Build rolling enforcement statistics."""
+        samples = list(state.samples)
+        count = len(samples)
+        mean = sum(samples) / count if count else None
+        stdev = (
+            sqrt(sum((sample - mean) ** 2 for sample in samples) / count)
+            if count and mean is not None
+            else None
+        )
+        return {
+            "mean": round(mean, 3) if mean is not None else None,
+            "min": min(samples) if count else None,
+            "max": max(samples) if count else None,
+            "stdev": round(stdev, 3) if stdev is not None else None,
+            "sample_count": count,
+            "target_amps": state.target_amps,
+            "last_status": state.last_status,
+        }
+
+    def _publish_charge_rate_enforcement_stats(self, conn_id: int) -> None:
+        """Expose enforcement stats on the Current.Import metric attributes."""
+        conn = self._target_connector_id(conn_id)
+        state = self._get_charge_rate_enforcement_state(conn)
+        metric = self._metrics[(conn, Measurand.current_import.value)]
+        extra_attr = metric.extra_attr
+        if not isinstance(extra_attr, dict):
+            extra_attr = {}
+        extra_attr[CHARGE_RATE_ENFORCEMENT_ATTR] = self._charge_rate_stats(state)
+        metric.extra_attr = extra_attr
+
+    def get_charge_rate_enforcement_stats(
+        self, conn_id: int = 1
+    ) -> dict[str, float | int | str | None]:
+        """Return the latest rolling enforcement statistics."""
+        conn = self._target_connector_id(conn_id)
+        state = self._get_charge_rate_enforcement_state(conn)
+        return self._charge_rate_stats(state)
+
+    def _record_charge_rate_sample(
+        self, state: ChargeRateEnforcementState, sample: float
+    ) -> None:
+        """Record a valid current sample and update the stability counter."""
+        state.samples.append(sample)
+        window = max(1, int(state.stability_samples or 1))
+        state.samples = state.samples[-window:]
+        if state.target_amps is not None and abs(sample - state.target_amps) <= float(
+            state.tolerance_amps
+        ):
+            state.stable_count += 1
+        else:
+            state.stable_count = 0
+
+        if state.stable_count >= window:
+            state.last_status = "stable"
+        else:
+            state.last_status = "outside_tolerance"
+
+    async def _charge_rate_enforcement_tick(self, conn_id: int, send_once) -> bool:
+        """Run one deterministic enforcement iteration."""
+        conn = self._target_connector_id(conn_id)
+        state = self._get_charge_rate_enforcement_state(conn)
+        if state.target_amps is None:
+            return False
+
+        if not self._charge_rate_enforcement_connected():
+            state.last_status = "disconnected"
+            self._publish_charge_rate_enforcement_stats(conn)
+            return False
+
+        current_reconnects = self._charge_rate_reconnect_count()
+        current_boot_generation = getattr(self, "_charge_rate_boot_generation", 0)
+        needs_reapply = (
+            current_reconnects != state.last_reconnects
+            or current_boot_generation != state.last_boot_generation
+        )
+
+        sample = self._measure_current_amps(conn)
+        if sample is not None:
+            self._record_charge_rate_sample(state, sample)
+
+        now = time.monotonic()
+        window = max(1, int(state.stability_samples or 1))
+        target_changed = (
+            state.last_sent_amps is None
+            or abs(float(state.last_sent_amps) - float(state.target_amps)) > 0.001
+        )
+        unstable_window = (
+            sample is not None
+            and len(state.samples) >= window
+            and state.stable_count < window
+            and now - state.last_send_ts >= int(state.min_update_interval or 0)
+        )
+
+        if not (target_changed or needs_reapply or unstable_window):
+            self._publish_charge_rate_enforcement_stats(conn)
+            return False
+
+        try:
+            ok = await send_once(
+                limit_amps=state.target_amps,
+                limit_watts=state.limit_watts,
+                conn_id=state.conn_id,
+                profile=state.profile,
+            )
+        except Exception as ex:
+            ok = False
+            _LOGGER.debug("Charge-rate enforcement send failed: %s", ex)
+
+        if ok:
+            state.last_sent_amps = state.target_amps
+            state.last_send_ts = now
+            state.backoff = 1.0
+            state.last_reconnects = current_reconnects
+            state.last_boot_generation = current_boot_generation
+            state.last_status = "resent" if unstable_window and not needs_reapply else "sent"
+        else:
+            state.last_status = "send_failed"
+            state.backoff = min(
+                max(float(state.backoff or 1.0) * 2, 1.0),
+                max(float(state.min_update_interval or 1), 1.0),
+            )
+
+        self._publish_charge_rate_enforcement_stats(conn)
+        return bool(ok)
+
+    async def _charge_rate_enforcement_loop(self, conn_id: int, send_once) -> None:
+        """Poll metrics and enforce the target without blind repeated sends."""
+        conn = self._target_connector_id(conn_id)
+        try:
+            while True:
+                state = self._get_charge_rate_enforcement_state(conn)
+                sleep_for = min(
+                    CHARGE_RATE_ENFORCEMENT_SLEEP,
+                    max(1, int(state.min_update_interval or 1)),
+                )
+                await asyncio.sleep(sleep_for)
+                if state.task is not asyncio.current_task():
+                    return
+                await self._charge_rate_enforcement_tick(conn, send_once)
+                if state.last_status == "send_failed":
+                    await asyncio.sleep(max(1.0, float(state.backoff or 1.0)))
+        except asyncio.CancelledError:
+            raise
+
+    async def _start_charge_rate_enforcement(
+        self,
+        *,
+        limit_amps: int | float = 32,
+        limit_watts: int = 22000,
+        conn_id: int = 0,
+        profile: dict | None = None,
+        tolerance_amps: float = DEFAULT_CHARGE_RATE_TOLERANCE,
+        stability_samples: int = DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
+        min_update_interval: int = DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
+        send_once=None,
+    ) -> bool:
+        """Start or update a connector's charge-rate enforcement loop."""
+        conn = self._target_connector_id(conn_id)
+        state = self._get_charge_rate_enforcement_state(conn)
+        target = float(limit_amps)
+        same_target = (
+            state.target_amps is not None
+            and abs(float(state.target_amps) - target) <= 0.001
+            and state.conn_id == conn
+            and state.task is not None
+            and not state.task.done()
+        )
+
+        state.target_amps = target
+        state.limit_watts = int(limit_watts)
+        state.conn_id = conn
+        state.profile = profile
+        state.tolerance_amps = float(tolerance_amps)
+        state.stability_samples = max(1, int(stability_samples))
+        state.min_update_interval = max(1, int(min_update_interval))
+
+        if same_target:
+            self._publish_charge_rate_enforcement_stats(conn)
+            return True
+
+        await self._cancel_charge_rate_enforcement_state(state)
+        state.task = None
+        state.samples = []
+        state.stable_count = 0
+
+        if send_once is None:
+            return False
+
+        ok = True
+        if self._charge_rate_enforcement_connected():
+            ok = await self._charge_rate_enforcement_tick(conn, send_once)
+        else:
+            state.last_status = "disconnected"
+            self._publish_charge_rate_enforcement_stats(conn)
+
+        state.task = asyncio.create_task(
+            self._charge_rate_enforcement_loop(conn, send_once)
+        )
+        return bool(ok)
 
     async def set_availability(self, state: bool = True) -> bool:
         """Change availability."""
@@ -573,6 +937,8 @@ class ChargePoint(cp):
         await self.stop()
         self.status = STATE_OK
         self._connection = connection
+        self.post_connect_success = False
+        self.received_boot_notification = False
         self._metrics[(0, cstat.reconnects.value)].value += 1
         # post connect now handled on receiving boot notification or with backstop in monitor connection
         await self.run([super().start(), self.monitor_connection()])
@@ -599,6 +965,9 @@ class ChargePoint(cp):
         )
 
     def _register_boot_notification(self):
+        self._charge_rate_boot_generation = (
+            getattr(self, "_charge_rate_boot_generation", 0) + 1
+        )
         if self.triggered_boot_notification is False:
             self.hass.async_create_task(self.notify_ha(f"Charger {self.id} rebooted"))
             if not self.post_connect_success:
