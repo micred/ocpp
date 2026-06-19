@@ -18,6 +18,7 @@ from custom_components.ocpp.ocppv16 import ChargePoint as ChargePointv16
 from custom_components.ocpp.enums import (
     Profiles as prof,
     ConfigurationKey as ckey,
+    HAChargerDetails as cdet,
 )
 from ocpp.v16.enums import (
     ChargingProfileStatus,
@@ -186,6 +187,8 @@ async def test_cpmax_rejected_txdefault_accepted_returns_true(cp_v16, monkeypatc
     ok = await cp_v16.set_charge_rate(limit_amps=10, conn_id=2)
     assert ok is True
     assert notices == []
+
+
 @pytest.mark.asyncio
 async def test_generated_profile_remains_relative_for_non_juicebox(cp_v16, monkeypatch):
     """Generated profiles keep upstream relative scheduling for generic chargers."""
@@ -243,8 +246,10 @@ async def test_generated_profile_uses_absolute_start_schedule_for_juicebox(
     async def fake_notify(msg, title="Ocpp integration"):
         return True
 
-    cp_v16._charge_point_vendor = "ENEL"
-    cp_v16._charge_point_model = "JuiceBox30_V1"
+    cp_v16._metrics = {
+        (0, cdet.vendor.value): SimpleNamespace(value="ENEL"),
+        (0, cdet.model.value): SimpleNamespace(value="JuiceBox30_V1"),
+    }
     monkeypatch.setattr(cp_v16, "get_configuration", fake_get_conf)
     monkeypatch.setattr(cp_v16, "call", fake_call)
     monkeypatch.setattr(cp_v16, "notify_ha", fake_notify)

@@ -406,6 +406,20 @@ class ChargePoint(cp):
             _LOGGER.debug("ClearChargingProfile raised %s (ignored)", ex)
             return False
 
+    def _is_juicebox_charge_point(self) -> bool:
+        """Return true when the charger identity matches a JuiceBox."""
+        values = [
+            getattr(self, "_charge_point_vendor", None),
+            getattr(self, "_charge_point_model", None),
+        ]
+        metric_get = getattr(getattr(self, "_metrics", None), "get", None)
+        if callable(metric_get):
+            values.extend(
+                getattr(metric_get(key), "value", None)
+                for key in ((0, cdet.vendor.value), (0, cdet.model.value))
+            )
+        return any("juicebox" in str(value).lower() for value in values if value)
+
     async def set_charge_rate(
         self,
         limit_amps: int = 32,
@@ -458,14 +472,28 @@ class ChargePoint(cp):
         except Exception:
             stack_level = 1
 
-        # Helper to build a simple relative schedule with one period
+        use_absolute_schedule = self._is_juicebox_charge_point()
+        charging_profile_kind = (
+            ChargingProfileKindType.absolute.value
+            if use_absolute_schedule
+            else ChargingProfileKindType.relative.value
+        )
+
+        # Helper to build a simple schedule with one period
         def _mk_schedule(_units: str, _limit: float) -> dict:
-            return {
+            schedule = {
                 om.charging_rate_unit.value: _units,
                 om.charging_schedule_period.value: [
                     {om.start_period.value: 0, om.limit.value: _limit}
                 ],
             }
+            if use_absolute_schedule:
+                schedule["startSchedule"] = (
+                    datetime.now(tz=UTC)
+                    .replace(microsecond=0)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+            return schedule
 
         # Helper to generate a unique, stable chargingProfileId per purpose+connector
         def _profile_id(purpose: str, cid: int) -> int:
@@ -489,7 +517,7 @@ class ChargePoint(cp):
                         ChargingProfilePurposeType.charge_point_max_profile.value, 0
                     ),
                     om.stack_level.value: stack_level,
-                    om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
+                    om.charging_profile_kind.value: charging_profile_kind,
                     om.charging_profile_purpose.value: ChargingProfilePurposeType.charge_point_max_profile.value,
                     om.charging_schedule.value: _mk_schedule(units_value, limit_value),
                 },
@@ -527,7 +555,7 @@ class ChargePoint(cp):
                             ChargingProfilePurposeType.tx_profile.value, target_cid
                         ),
                         om.stack_level.value: txp_stack,
-                        om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
+                        om.charging_profile_kind.value: charging_profile_kind,
                         om.charging_profile_purpose.value: ChargingProfilePurposeType.tx_profile.value,
                         om.charging_schedule.value: _mk_schedule(
                             units_value, limit_value
@@ -556,7 +584,7 @@ class ChargePoint(cp):
                         ChargingProfilePurposeType.tx_default_profile.value, target_cid
                     ),
                     om.stack_level.value: tx_stack,
-                    om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
+                    om.charging_profile_kind.value: charging_profile_kind,
                     om.charging_profile_purpose.value: ChargingProfilePurposeType.tx_default_profile.value,
                     om.charging_schedule.value: _mk_schedule(units_value, limit_value),
                 },
