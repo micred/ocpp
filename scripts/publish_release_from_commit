@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/publish_release_from_commit <commit-ish> [tag]
+
+Publishes a HACS-compatible GitHub release for the OCPP integration.
+
+Required:
+  GH_TOKEN or GITHUB_TOKEN  GitHub token with repo/content write permission.
+
+Optional environment:
+  GITHUB_REPOSITORY         owner/repo, e.g. micred/ocpp. Inferred from remote if unset.
+  GITHUB_REMOTE             git remote to push the tag to. Defaults to micred, then origin.
+  RELEASE_NAME              GitHub release title. Defaults to "<tag> - <commit subject>".
+  RELEASE_BODY_FILE         Markdown file to use as release body. Defaults to commit message.
+  DRAFT                     true/false. Defaults to false.
+  PRERELEASE                true/false. Defaults to false.
+  ASSET_NAME                Release asset filename. Defaults to ocpp.zip.
+
+Examples:
+  GH_TOKEN=... scripts/publish_release_from_commit ec8a166 v0.10.15-absolute.2
+  GITHUB_REPOSITORY=micred/ocpp GH_TOKEN=... scripts/publish_release_from_commit HEAD
+EOF
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+json_escape_file() {
+  python3 - "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+print(json.dumps(pathlib.Path(sys.argv[1]).read_text()))
+PY
+}
+
+json_escape_string() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+print(json.dumps(sys.argv[1]))
+PY
+}
+
+json_field() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+value = data
+for part in sys.argv[2].split("."):
+    value = value[part]
+print(value)
+PY
+}
+
+remote_repo_name() {
+  local remote_url=$1
+
+  case "$remote_url" in
+    git@github.com:*)
+      remote_url=${remote_url#git@github.com:}
+      remote_url=${remote_url%.git}
+      ;;
+    https://github.com/*)
+      remote_url=${remote_url#https://github.com/}
+      remote_url=${remote_url%.git}
+      ;;
+    ssh://git@github.com/*)
+      remote_url=${remote_url#ssh://git@github.com/}
+      remote_url=${remote_url%.git}
+      ;;
+    *)
+      die "cannot infer GitHub repository from remote URL: $remote_url"
+      ;;
+  esac
+
+  echo "$remote_url"
+}
+
+default_tag_for_commit() {
+  local short=$1
+  local year month day
+
+  year=$(date -u +%Y)
+  month=$(date -u +%m | sed 's/^0//')
+  day=$(date -u +%d | sed 's/^0//')
+
+  echo "v${year}.${month}.${day}-${short}"
+}
+
+github_api() {
+  local method=$1
+  local url=$2
+  local data_file=${3:-}
+
+  if [[ -n "$data_file" ]]; then
+    curl -fsS \
+      -X "$method" \
+      -H "Accept: application/vnd.github+json" \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      -H "Content-Type: application/json" \
+      --data-binary "@$data_file" \
+      "$url"
+  else
+    curl -fsS \
+      -X "$method" \
+      -H "Accept: application/vnd.github+json" \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$url"
+  fi
+}
+
+if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+COMMITISH=${1:-}
+[[ -n "$COMMITISH" ]] || {
+  usage >&2
+  exit 2
+}
+
+require_cmd git
+require_cmd curl
+require_cmd python3
+require_cmd zip
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)
+
+COMMIT=$(git -C "$REPO_ROOT" rev-parse --verify "${COMMITISH}^{commit}") ||
+  die "not a valid commit: $COMMITISH"
+SHORT_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short "$COMMIT")
+COMMIT_SUBJECT=$(git -C "$REPO_ROOT" log -1 --format=%s "$COMMIT")
+
+TAG=${2:-${RELEASE_TAG:-$(default_tag_for_commit "$SHORT_COMMIT")}}
+VERSION=${TAG#v}
+ASSET_NAME=${ASSET_NAME:-ocpp.zip}
+DRAFT=${DRAFT:-false}
+PRERELEASE=${PRERELEASE:-false}
+TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+[[ -n "$TOKEN" ]] || die "set GH_TOKEN or GITHUB_TOKEN"
+
+case "$DRAFT" in true | false) ;; *) die "DRAFT must be true or false" ;; esac
+case "$PRERELEASE" in true | false) ;; *) die "PRERELEASE must be true or false" ;; esac
+
+REMOTE=${GITHUB_REMOTE:-}
+if [[ -z "$REMOTE" ]]; then
+  if git -C "$REPO_ROOT" remote get-url micred >/dev/null 2>&1; then
+    REMOTE=micred
+  else
+    REMOTE=origin
+  fi
+fi
+
+REPOSITORY=${GITHUB_REPOSITORY:-}
+if [[ -z "$REPOSITORY" ]]; then
+  REPOSITORY=$(remote_repo_name "$(git -C "$REPO_ROOT" remote get-url "$REMOTE")")
+fi
+
+TMP_DIR=$(mktemp -d)
+cleanup() {
+  git -C "$REPO_ROOT" worktree remove --force "$TMP_DIR/worktree" >/dev/null 2>&1 || true
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+echo "Repository: $REPOSITORY"
+echo "Commit:     $COMMIT"
+echo "Tag:        $TAG"
+echo "Asset:      $ASSET_NAME"
+
+if git -C "$REPO_ROOT" rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+  existing_tag_commit=$(git -C "$REPO_ROOT" rev-list -n 1 "$TAG")
+  [[ "$existing_tag_commit" == "$COMMIT" ]] ||
+    die "local tag $TAG points to $existing_tag_commit, not $COMMIT"
+else
+  git -C "$REPO_ROOT" tag -a "$TAG" "$COMMIT" -m "Release $TAG"
+fi
+
+git -C "$REPO_ROOT" push "$REMOTE" "refs/tags/$TAG"
+
+git -C "$REPO_ROOT" worktree add --detach "$TMP_DIR/worktree" "$COMMIT" >/dev/null
+
+if [[ -f "$TMP_DIR/worktree/manage/update_manifest.py" ]]; then
+  (cd "$TMP_DIR/worktree" && python3 manage/update_manifest.py --version "$VERSION")
+fi
+
+(
+  cd "$TMP_DIR/worktree/custom_components/ocpp"
+  zip -qr "$TMP_DIR/$ASSET_NAME" .
+)
+
+if [[ -n "${RELEASE_BODY_FILE:-}" ]]; then
+  [[ -f "$RELEASE_BODY_FILE" ]] || die "RELEASE_BODY_FILE not found: $RELEASE_BODY_FILE"
+  body_json=$(json_escape_file "$RELEASE_BODY_FILE")
+else
+  body_file="$TMP_DIR/release_body.md"
+  {
+    git -C "$REPO_ROOT" log -1 --format=%B "$COMMIT"
+    echo
+    echo "Commit: \`$COMMIT\`"
+  } >"$body_file"
+  body_json=$(json_escape_file "$body_file")
+fi
+
+release_name=${RELEASE_NAME:-"$TAG - $COMMIT_SUBJECT"}
+release_name_json=$(json_escape_string "$release_name")
+
+payload="$TMP_DIR/release.json"
+cat >"$payload" <<EOF
+{
+  "tag_name": "$TAG",
+  "target_commitish": "$COMMIT",
+  "name": $release_name_json,
+  "body": $body_json,
+  "draft": $DRAFT,
+  "prerelease": $PRERELEASE
+}
+EOF
+
+release_json=""
+if release_json=$(github_api GET "https://api.github.com/repos/$REPOSITORY/releases/tags/$TAG" 2>/dev/null); then
+  echo "Release already exists for $TAG; replacing $ASSET_NAME asset if present."
+else
+  release_json=$(github_api POST "https://api.github.com/repos/$REPOSITORY/releases" "$payload")
+fi
+
+release_id=$(json_field "$release_json" id)
+upload_url=$(json_field "$release_json" upload_url)
+upload_url=${upload_url%\{*}
+
+assets_json=$(github_api GET "https://api.github.com/repos/$REPOSITORY/releases/$release_id/assets")
+existing_asset_id=$(
+  python3 - "$assets_json" "$ASSET_NAME" <<'PY'
+import json
+import sys
+
+for asset in json.loads(sys.argv[1]):
+    if asset.get("name") == sys.argv[2]:
+        print(asset["id"])
+        break
+PY
+)
+
+if [[ -n "$existing_asset_id" ]]; then
+  github_api DELETE "https://api.github.com/repos/$REPOSITORY/releases/assets/$existing_asset_id" >/dev/null
+fi
+
+curl -fsS \
+  -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  -H "Content-Type: application/zip" \
+  --data-binary "@$TMP_DIR/$ASSET_NAME" \
+  "$upload_url?name=$ASSET_NAME&label=$ASSET_NAME" >/dev/null
+
+echo "Published release:"
+echo "https://github.com/$REPOSITORY/releases/tag/$TAG"
