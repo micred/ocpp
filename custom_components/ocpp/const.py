@@ -29,6 +29,7 @@ CONF_NAME = ha.CONF_NAME
 CONF_NUM_CONNECTORS = "num_connectors"
 CONF_PASSWORD = ha.CONF_PASSWORD
 CONF_PORT = ha.CONF_PORT
+CONF_REMOTE_START_ID_TAG = "remote_start_id_tag"
 CONF_SKIP_SCHEMA_VALIDATION = "skip_schema_validation"
 CONF_FORCE_SMART_CHARGING = "force_smart_charging"
 CONF_SSL = "ssl"
@@ -50,6 +51,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_MAX_CURRENT = 32
 DEFAULT_NUM_CONNECTORS = 1
 DEFAULT_PORT = 9000
+DEFAULT_REMOTE_START_ID_TAG = ""
 DEFAULT_SKIP_SCHEMA_VALIDATION = False
 DEFAULT_FORCE_SMART_CHARGING = False
 DEFAULT_SSL = False
@@ -159,6 +161,7 @@ class ChargerSystemSettings:
     skip_schema_validation: bool
     force_smart_charging: bool
     charge_rate_profile_kind: str = DEFAULT_CHARGE_RATE_PROFILE_KIND
+    remote_start_id_tag: str = DEFAULT_REMOTE_START_ID_TAG
     connection: int | None = None  # number of this connection in central server
     num_connectors: int = DEFAULT_NUM_CONNECTORS
 

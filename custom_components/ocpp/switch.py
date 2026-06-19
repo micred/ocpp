@@ -29,6 +29,9 @@ from .const import (
 )
 from .enums import HAChargerServices, HAChargerStatuses
 
+CONNECTOR_AVAILABILITY_KEY = "connector_availability"
+LEGACY_CONNECTOR_AVAILABILITY_KEY = "connnector_availability"
+
 
 # Switch configuration definitions
 # At a minimum define switch name and on service call,
@@ -72,7 +75,7 @@ SWITCHES: Final[list[OcppSwitchDescription]] = [
         per_connector=False,
     ),
     OcppSwitchDescription(
-        key="connnector_availability",
+        key=CONNECTOR_AVAILABILITY_KEY,
         name="Connector Availability",
         icon=ICON,
         on_action=HAChargerServices.service_availability.name,
@@ -116,6 +119,20 @@ async def async_setup_entry(hass, entry, async_add_devices):
             break
         flatten_single = num_connectors == 1
 
+        for conn_id in range(1, num_connectors + 1):
+            uid_legacy = ".".join(
+                [
+                    SWITCH_DOMAIN,
+                    DOMAIN,
+                    cpid,
+                    f"conn{conn_id}",
+                    LEGACY_CONNECTOR_AVAILABILITY_KEY,
+                ]
+            )
+            stale_eid = ent_reg.async_get_entity_id(SWITCH_DOMAIN, DOMAIN, uid_legacy)
+            if stale_eid:
+                ent_reg.async_remove(stale_eid)
+
         if num_connectors > 1:
             for desc in SWITCHES:
                 if not desc.per_connector:
@@ -129,7 +146,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
         for desc in SWITCHES:
             if desc.per_connector:
                 # Only create Connector Availability switches for multi-connector chargers
-                if desc.key == "connnector_availability" and num_connectors <= 1:
+                if desc.key == CONNECTOR_AVAILABILITY_KEY and num_connectors <= 1:
                     continue
                 for conn_id in range(1, num_connectors + 1):
                     entities.append(

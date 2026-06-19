@@ -23,7 +23,8 @@
                     "idle_interval": "Intervalo de muestreo del cargador en reposo (segundos)",
                     "skip_schema_validation": "Omitir validación esquema OCPP",
                     "force_smart_charging": "Forzar perfil de función Smart Charging",
-                    "charge_rate_profile_kind": "Tipo de perfil de límite de carga"
+                    "charge_rate_profile_kind": "Tipo de perfil de límite de carga",
+                    "remote_start_id_tag": "idTag de inicio remoto"
                 }
             },
             "measurands": {
@@ -74,7 +75,8 @@
             "charge_rate_profile": {
                 "title": "Perfil de límite de carga",
                 "data": {
-                    "charge_rate_profile_kind": "Tipo de perfil de límite de carga"
+                    "charge_rate_profile_kind": "Tipo de perfil de límite de carga",
+                    "remote_start_id_tag": "idTag de inicio remoto"
                 }
             }
         },

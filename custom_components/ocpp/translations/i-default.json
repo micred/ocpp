@@ -28,7 +28,8 @@
                     "idle_interval": "Charger idle sampling interval (seconds)",
                     "skip_schema_validation": "Skip OCPP schema validation",
                     "force_smart_charging": "Force Smart Charging feature profile",
-                    "charge_rate_profile_kind": "Charge rate profile kind"
+                    "charge_rate_profile_kind": "Charge rate profile kind",
+                    "remote_start_id_tag": "Remote start idTag"
                 }
             },
             "measurands": {
@@ -81,7 +82,8 @@
             "charge_rate_profile": {
                 "title": "Charge Rate Profile",
                 "data": {
-                    "charge_rate_profile_kind": "Charge rate profile kind"
+                    "charge_rate_profile_kind": "Charge rate profile kind",
+                    "remote_start_id_tag": "Remote start idTag"
                 }
             }
         },

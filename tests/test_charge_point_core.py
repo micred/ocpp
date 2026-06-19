@@ -58,7 +58,7 @@ def _mk_entry_data():
     }
 
 
-def _mk_cp(hass, *, version=OcppVersion.V201):
+def _mk_cp(hass, *, version=OcppVersion.V201, remote_start_id_tag: str = ""):
     entry = MockConfigEntry(domain=DOMAIN, data=_mk_entry_data())
     centr = CentralSystemSettings(**entry.data)
     chg = ChargerSystemSettings(
@@ -70,12 +70,20 @@ def _mk_cp(hass, *, version=OcppVersion.V201):
         monitored_variables_autoconfig=False,
         skip_schema_validation=False,
         force_smart_charging=False,
+        remote_start_id_tag=remote_start_id_tag,
     )
     # Minimal fake connection
     conn = SimpleNamespace(state=State.CLOSED, close=lambda: asyncio.sleep(0))
     cp = ChargePoint("CP_A", conn, version, hass, entry, centr, chg)
     cp._metrics[(0, csess.meter_start.value)].value = None
     return cp
+
+
+def test_remote_start_id_tag_uses_configured_value(hass):
+    """Use a configured remote-start idTag instead of a generated random value."""
+    cp = _mk_cp(hass, remote_start_id_tag="REMOTE123")
+
+    assert cp._remote_id_tag == "REMOTE123"
 
 
 def test_connector_aware_metrics_core():

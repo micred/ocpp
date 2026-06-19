@@ -11,8 +11,10 @@ import pytest
 from custom_components.ocpp.const import (
     CONF_CHARGE_RATE_PROFILE_KIND,
     CONF_NUM_CONNECTORS,
+    CONF_REMOTE_START_ID_TAG,
     DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_NUM_CONNECTORS,
+    DEFAULT_REMOTE_START_ID_TAG,
     DOMAIN,
 )
 from custom_components.ocpp.config_flow import STEP_USER_CP_DATA_SCHEMA
@@ -76,21 +78,25 @@ async def test_successful_config_flow(hass, bypass_get_data):
     assert result["result"]
 
 
-def test_charge_rate_profile_kind_config_schema():
-    """Charger config defaults profile kind to relative and accepts absolute."""
+def test_charge_profile_and_remote_start_config_schema():
+    """Charger config defaults profile kind/idTag and accepts explicit values."""
     cp_input = MOCK_CONFIG_CP.copy()
     cp_input.pop(CONF_CHARGE_RATE_PROFILE_KIND, None)
+    cp_input.pop(CONF_REMOTE_START_ID_TAG, None)
 
     validated = STEP_USER_CP_DATA_SCHEMA(cp_input)
 
     assert validated[CONF_CHARGE_RATE_PROFILE_KIND] == DEFAULT_CHARGE_RATE_PROFILE_KIND
+    assert validated[CONF_REMOTE_START_ID_TAG] == DEFAULT_REMOTE_START_ID_TAG
 
     cp_input[CONF_CHARGE_RATE_PROFILE_KIND] = ChargingProfileKindType.absolute.value
+    cp_input[CONF_REMOTE_START_ID_TAG] = "REMOTE123"
     validated = STEP_USER_CP_DATA_SCHEMA(cp_input)
 
     assert validated[CONF_CHARGE_RATE_PROFILE_KIND] == (
         ChargingProfileKindType.absolute.value
     )
+    assert validated[CONF_REMOTE_START_ID_TAG] == "REMOTE123"
 
 
 async def test_successful_discovery_flow(hass, bypass_get_data):
@@ -194,18 +200,27 @@ async def test_charge_rate_profile_kind_options_flow_updates_existing_charger(ha
     assert CONF_CHARGE_RATE_PROFILE_KIND in [
         key.schema for key in result["data_schema"].schema
     ]
+    assert CONF_REMOTE_START_ID_TAG in [
+        key.schema for key in result["data_schema"].schema
+    ]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_CHARGE_RATE_PROFILE_KIND: ChargingProfileKindType.absolute.value
+            CONF_CHARGE_RATE_PROFILE_KIND: ChargingProfileKindType.absolute.value,
+            CONF_REMOTE_START_ID_TAG: "REMOTE123",
         },
     )
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert config_entry.data[CONF_CPIDS][0]["test_cp_id"][
-        CONF_CHARGE_RATE_PROFILE_KIND
-    ] == ChargingProfileKindType.absolute.value
+    assert (
+        config_entry.data[CONF_CPIDS][0]["test_cp_id"][CONF_CHARGE_RATE_PROFILE_KIND]
+        == ChargingProfileKindType.absolute.value
+    )
+    assert (
+        config_entry.data[CONF_CPIDS][0]["test_cp_id"][CONF_REMOTE_START_ID_TAG]
+        == "REMOTE123"
+    )
 
 
 async def test_duplicate_cpid_discovery_flow(hass, bypass_get_data):

@@ -279,8 +279,13 @@ class ChargePoint(cp):
         self._metrics[(0, cstat.reconnects.value)].value = 0
 
         self._attr_supported_features = prof.NONE
-        alphabet = string.ascii_uppercase + string.digits
-        self._remote_id_tag = "".join(secrets.choice(alphabet) for i in range(20))
+        remote_start_id_tag = getattr(charger, "remote_start_id_tag", "") or ""
+        remote_start_id_tag = remote_start_id_tag.strip()
+        if remote_start_id_tag:
+            self._remote_id_tag = remote_start_id_tag
+        else:
+            alphabet = string.ascii_uppercase + string.digits
+            self._remote_id_tag = "".join(secrets.choice(alphabet) for i in range(20))
         self.num_connectors: int = DEFAULT_NUM_CONNECTORS
 
     def _init_connector_slots(self, conn_id: int) -> None:

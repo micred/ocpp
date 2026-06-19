@@ -28,6 +28,7 @@
                     "skip_schema_validation": "Überspringe OCPP-Schemavalidierung",
                     "force_smart_charging": "Erzwinge Smart Charging Funktionsprofil",
                     "charge_rate_profile_kind": "Ladeprofilart fuer Strombegrenzung",
+                    "remote_start_id_tag": "Remote-Start idTag",
                     "monitored_variables_autoconfig": "Automatische Erkennung der OCPP-Messwerte"
                 }
             },
@@ -79,7 +80,8 @@
             "charge_rate_profile": {
                 "title": "Ladeprofil",
                 "data": {
-                    "charge_rate_profile_kind": "Ladeprofilart fuer Strombegrenzung"
+                    "charge_rate_profile_kind": "Ladeprofilart fuer Strombegrenzung",
+                    "remote_start_id_tag": "Remote-Start idTag"
                 }
             }
         },

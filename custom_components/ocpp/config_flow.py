@@ -27,6 +27,7 @@ from .const import (
     CONF_MONITORED_VARIABLES_AUTOCONFIG,
     CONF_NUM_CONNECTORS,
     CONF_PORT,
+    CONF_REMOTE_START_ID_TAG,
     CONF_SKIP_SCHEMA_VALIDATION,
     CONF_SSL,
     CONF_SSL_CERTFILE_PATH,
@@ -48,6 +49,7 @@ from .const import (
     DEFAULT_MONITORED_VARIABLES_AUTOCONFIG,
     DEFAULT_NUM_CONNECTORS,
     DEFAULT_PORT,
+    DEFAULT_REMOTE_START_ID_TAG,
     DEFAULT_SKIP_SCHEMA_VALIDATION,
     DEFAULT_SSL,
     DEFAULT_SSL_CERTFILE_PATH,
@@ -104,6 +106,9 @@ STEP_USER_CP_DATA_SCHEMA = vol.Schema(
         vol.Required(
             CONF_CHARGE_RATE_PROFILE_KIND, default=DEFAULT_CHARGE_RATE_PROFILE_KIND
         ): vol.In(CHARGE_RATE_PROFILE_KINDS),
+        vol.Optional(
+            CONF_REMOTE_START_ID_TAG, default=DEFAULT_REMOTE_START_ID_TAG
+        ): vol.All(str, vol.Length(max=20)),
     }
 )
 
@@ -332,6 +337,9 @@ class OptionsFlowHandler(OptionsFlow):
                             CONF_CHARGE_RATE_PROFILE_KIND: user_input[
                                 CONF_CHARGE_RATE_PROFILE_KIND
                             ],
+                            CONF_REMOTE_START_ID_TAG: user_input[
+                                CONF_REMOTE_START_ID_TAG
+                            ],
                         },
                     }
                     break
@@ -345,6 +353,9 @@ class OptionsFlowHandler(OptionsFlow):
         )
         if current_kind not in CHARGE_RATE_PROFILE_KINDS:
             current_kind = DEFAULT_CHARGE_RATE_PROFILE_KIND
+        current_remote_start_id_tag = cp_data.get(
+            CONF_REMOTE_START_ID_TAG, DEFAULT_REMOTE_START_ID_TAG
+        )
 
         return self.async_show_form(
             step_id="charge_rate_profile",
@@ -352,7 +363,11 @@ class OptionsFlowHandler(OptionsFlow):
                 {
                     vol.Required(
                         CONF_CHARGE_RATE_PROFILE_KIND, default=current_kind
-                    ): vol.In(CHARGE_RATE_PROFILE_KINDS)
+                    ): vol.In(CHARGE_RATE_PROFILE_KINDS),
+                    vol.Optional(
+                        CONF_REMOTE_START_ID_TAG,
+                        default=current_remote_start_id_tag,
+                    ): vol.All(str, vol.Length(max=20)),
                 }
             ),
         )
