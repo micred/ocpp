@@ -70,6 +70,26 @@
             "reauth_successful": "New charger configured"
         }
     },
+    "options": {
+        "step": {
+            "init": {
+                "title": "OCPP Charger Options",
+                "data": {
+                    "charge_point_id": "Charge point"
+                }
+            },
+            "charge_rate_profile": {
+                "title": "Charge Rate Profile",
+                "data": {
+                    "charge_rate_profile_kind": "Charge rate profile kind"
+                }
+            }
+        },
+        "abort": {
+            "no_chargers_configured": "No chargers are configured",
+            "charger_not_found": "Charger was not found"
+        }
+    },
     "exceptions": {
         "invalid_ocpp_key": {
             "message": "Invalid OCPP key"

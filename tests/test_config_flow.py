@@ -1,5 +1,6 @@
 """Test ocpp config flow."""
 
+from copy import deepcopy
 from unittest.mock import patch
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -169,6 +170,42 @@ async def test_successful_discovery_flow(hass, bypass_get_data):
     assert result_cp2["type"] == data_entry_flow.FlowResultType.ABORT
     # Check there are 2 cpid entries
     assert len(entry.data[CONF_CPIDS]) == 2
+
+
+async def test_charge_rate_profile_kind_options_flow_updates_existing_charger(hass):
+    """Test an existing charger exposes charge profile kind in options."""
+    entry_data = deepcopy(MOCK_CONFIG_FLOW)
+    entry_data[CONF_CPIDS][0]["test_cp_id"].pop(CONF_CHARGE_RATE_PROFILE_KIND)
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=entry_data,
+        entry_id="test_cms_options",
+        title="test_cms_options",
+        version=2,
+        minor_version=1,
+    )
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "charge_rate_profile"
+    assert CONF_CHARGE_RATE_PROFILE_KIND in [
+        key.schema for key in result["data_schema"].schema
+    ]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_CHARGE_RATE_PROFILE_KIND: ChargingProfileKindType.absolute.value
+        },
+    )
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert config_entry.data[CONF_CPIDS][0]["test_cp_id"][
+        CONF_CHARGE_RATE_PROFILE_KIND
+    ] == ChargingProfileKindType.absolute.value
 
 
 async def test_duplicate_cpid_discovery_flow(hass, bypass_get_data):

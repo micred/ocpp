@@ -62,5 +62,25 @@
         "abort": {
             "single_instance_allowed": "Slechts een exemplaar toegestaan."
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "OCPP laadpuntopties",
+                "data": {
+                    "charge_point_id": "Laadpunt"
+                }
+            },
+            "charge_rate_profile": {
+                "title": "Laadlimietprofiel",
+                "data": {
+                    "charge_rate_profile_kind": "Laadlimiet profieltype"
+                }
+            }
+        },
+        "abort": {
+            "no_chargers_configured": "Er zijn geen laadpunten geconfigureerd",
+            "charger_not_found": "Laadpunt is niet gevonden"
+        }
     }
 }

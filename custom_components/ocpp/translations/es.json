@@ -62,5 +62,25 @@
         "abort": {
             "single_instance_allowed": "Sólo se permite una única instancia."
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Opciones del cargador OCPP",
+                "data": {
+                    "charge_point_id": "Punto de carga"
+                }
+            },
+            "charge_rate_profile": {
+                "title": "Perfil de límite de carga",
+                "data": {
+                    "charge_rate_profile_kind": "Tipo de perfil de límite de carga"
+                }
+            }
+        },
+        "abort": {
+            "no_chargers_configured": "No hay cargadores configurados",
+            "charger_not_found": "No se encontró el cargador"
+        }
     }
 }
