@@ -78,12 +78,8 @@ CHRGR_SERVICE_DATA_SCHEMA = vol.Schema(
         vol.Optional("devid"): cv.string,
         vol.Optional("limit_amps"): cv.positive_float,
         vol.Optional("limit_watts"): cv.positive_int,
-        vol.Optional("conn_id"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional("conn_id"): cv.positive_int,
         vol.Optional("custom_profile"): vol.Any(cv.string, dict),
-        vol.Optional("enforce"): cv.boolean,
-        vol.Optional("tolerance_amps"): cv.positive_float,
-        vol.Optional("stability_samples"): cv.positive_int,
-        vol.Optional("min_update_interval"): cv.positive_int,
     }
 )
 CUSTMSG_SERVICE_DATA_SCHEMA = vol.Schema(
@@ -660,31 +656,15 @@ class CentralSystem:
         watts = call.data.get("limit_watts", None)
         id = call.data.get("conn_id", 0)
         custom_profile = call.data.get("custom_profile", None)
-        enforcement_options = {
-            key: call.data[key]
-            for key in (
-                "enforce",
-                "tolerance_amps",
-                "stability_samples",
-                "min_update_interval",
-            )
-            if key in call.data
-        }
         if custom_profile is not None:
             if type(custom_profile) is str:
                 custom_profile = custom_profile.replace("'", '"')
                 custom_profile = json.loads(custom_profile)
-            await cp.set_charge_rate(
-                profile=custom_profile, conn_id=id, **enforcement_options
-            )
+            await cp.set_charge_rate(profile=custom_profile, conn_id=id)
         elif watts is not None:
-            await cp.set_charge_rate(
-                limit_watts=watts, conn_id=id, **enforcement_options
-            )
+            await cp.set_charge_rate(limit_watts=watts, conn_id=id)
         elif amps is not None:
-            await cp.set_charge_rate(
-                limit_amps=amps, conn_id=id, **enforcement_options
-            )
+            await cp.set_charge_rate(limit_amps=amps, conn_id=id)
 
     @check_charger_available
     async def handle_configure(self, call, cp) -> ServiceResponse:

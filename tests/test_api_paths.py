@@ -10,7 +10,7 @@ from homeassistant.const import STATE_OK, STATE_UNAVAILABLE
 from homeassistant.exceptions import HomeAssistantError
 from websockets import NegotiationError
 
-from custom_components.ocpp.api import CHRGR_SERVICE_DATA_SCHEMA, CentralSystem
+from custom_components.ocpp.api import CentralSystem
 from custom_components.ocpp.const import DOMAIN
 from custom_components.ocpp.enums import (
     HAChargerServices as csvcs,
@@ -306,39 +306,6 @@ async def test_setters_when_missing_and_present(hass):
         "reset",
         "unlock",
     }
-
-
-@pytest.mark.asyncio
-async def test_set_charge_rate_service_accepts_enforcement_options(hass):
-    """set_charge_rate service validates and forwards enforcement options."""
-    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA.copy())
-    cs = CentralSystem(hass, entry)
-    cp = _install_dummy_cp(cs, cpid="ok", cp_id="CP_OK", status=STATE_OK)
-
-    data = CHRGR_SERVICE_DATA_SCHEMA(
-        {
-            "devid": "ok",
-            "limit_amps": 10.5,
-            "conn_id": 1,
-            "enforce": True,
-            "tolerance_amps": 1.5,
-            "stability_samples": 4,
-            "min_update_interval": 30,
-        }
-    )
-    await cs.handle_set_charge_rate(SimpleNamespace(data=data))
-
-    assert cp.calls[-1] == (
-        "set_charge_rate",
-        {
-            "limit_amps": 10.5,
-            "conn_id": 1,
-            "enforce": True,
-            "tolerance_amps": 1.5,
-            "stability_samples": 4,
-            "min_update_interval": 30,
-        },
-    )
 
 
 @pytest.mark.asyncio

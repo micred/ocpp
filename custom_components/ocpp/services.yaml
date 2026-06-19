@@ -50,34 +50,6 @@ set_charge_rate:
       required: false
       advanced: true
       example: '{"chargingProfileId":8,"stackLevel":0,"chargingProfileKind":"Relative","chargingProfilePurpose":"ChargePointMaxProfile","chargingSchedule":{"chargingRateUnit":"A","chargingSchedulePeriod":[{"startPeriod":0,"limit":16}]}}'
-    enforce:
-      name: Enforce target current
-      description: Verify measured current and reapply the profile only when the charger stays outside tolerance
-      required: false
-      advanced: true
-      example: true
-      default: false
-    tolerance_amps:
-      name: Tolerance (A)
-      description: Allowed difference between measured current and target current while enforcing
-      required: false
-      advanced: true
-      example: 2
-      default: 2
-    stability_samples:
-      name: Stability samples
-      description: Consecutive in-tolerance current samples required before enforcement is stable
-      required: false
-      advanced: true
-      example: 3
-      default: 3
-    min_update_interval:
-      name: Minimum update interval
-      description: Minimum seconds between repeated SetChargingProfile sends for the same enforced target
-      required: false
-      advanced: true
-      example: 60
-      default: 60
 
 trigger_custom_message:
   name: Trigger Message

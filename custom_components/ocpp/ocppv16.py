@@ -55,10 +55,6 @@ from .enums import (
 from .const import (
     CentralSystemSettings,
     ChargerSystemSettings,
-    DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
-    DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
-    DEFAULT_CHARGE_RATE_TOLERANCE,
-    DEFAULT_ENFORCE_CHARGE_RATE,
     DEFAULT_MEASURAND,
     HA_ENERGY_UNIT,
     MEASURANDS,
@@ -416,40 +412,8 @@ class ChargePoint(cp):
         limit_watts: int = 22000,
         conn_id: int = 0,
         profile: dict | None = None,
-        enforce: bool = DEFAULT_ENFORCE_CHARGE_RATE,
-        tolerance_amps: float = DEFAULT_CHARGE_RATE_TOLERANCE,
-        stability_samples: int = DEFAULT_CHARGE_RATE_STABILITY_SAMPLES,
-        min_update_interval: int = DEFAULT_CHARGE_RATE_MIN_UPDATE_INTERVAL,
     ) -> bool:
         """Set charge rate."""
-        if enforce and profile is None:
-            return await self._start_charge_rate_enforcement(
-                limit_amps=limit_amps,
-                limit_watts=limit_watts,
-                conn_id=conn_id,
-                profile=profile,
-                tolerance_amps=tolerance_amps,
-                stability_samples=stability_samples,
-                min_update_interval=min_update_interval,
-                send_once=self._send_charge_rate_once,
-            )
-
-        self.cancel_charge_rate_enforcement(conn_id)
-        return await self._send_charge_rate_once(
-            limit_amps=limit_amps,
-            limit_watts=limit_watts,
-            conn_id=conn_id,
-            profile=profile,
-        )
-
-    async def _send_charge_rate_once(
-        self,
-        limit_amps: int = 32,
-        limit_watts: int = 22000,
-        conn_id: int = 0,
-        profile: dict | None = None,
-    ) -> bool:
-        """Send one SetChargingProfile sequence."""
         if profile is not None:
             try:
                 req = call.SetChargingProfile(
@@ -494,13 +458,10 @@ class ChargePoint(cp):
         except Exception:
             stack_level = 1
 
-        # Helper to build a simple immediate schedule with one period.
+        # Helper to build a simple relative schedule with one period
         def _mk_schedule(_units: str, _limit: float) -> dict:
             return {
                 om.charging_rate_unit.value: _units,
-                "startSchedule": datetime.now(tz=UTC)
-                .replace(microsecond=0)
-                .strftime("%Y-%m-%dT%H:%M:%SZ"),
                 om.charging_schedule_period.value: [
                     {om.start_period.value: 0, om.limit.value: _limit}
                 ],
@@ -528,7 +489,7 @@ class ChargePoint(cp):
                         ChargingProfilePurposeType.charge_point_max_profile.value, 0
                     ),
                     om.stack_level.value: stack_level,
-                    om.charging_profile_kind.value: ChargingProfileKindType.absolute.value,
+                    om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
                     om.charging_profile_purpose.value: ChargingProfilePurposeType.charge_point_max_profile.value,
                     om.charging_schedule.value: _mk_schedule(units_value, limit_value),
                 },
@@ -566,7 +527,7 @@ class ChargePoint(cp):
                             ChargingProfilePurposeType.tx_profile.value, target_cid
                         ),
                         om.stack_level.value: txp_stack,
-                        om.charging_profile_kind.value: ChargingProfileKindType.absolute.value,
+                        om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
                         om.charging_profile_purpose.value: ChargingProfilePurposeType.tx_profile.value,
                         om.charging_schedule.value: _mk_schedule(
                             units_value, limit_value
@@ -595,7 +556,7 @@ class ChargePoint(cp):
                         ChargingProfilePurposeType.tx_default_profile.value, target_cid
                     ),
                     om.stack_level.value: tx_stack,
-                    om.charging_profile_kind.value: ChargingProfileKindType.absolute.value,
+                    om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
                     om.charging_profile_purpose.value: ChargingProfilePurposeType.tx_default_profile.value,
                     om.charging_schedule.value: _mk_schedule(units_value, limit_value),
                 },
@@ -932,10 +893,6 @@ class ChargePoint(cp):
         """Update device info asynchronuously."""
 
         _LOGGER.debug("Updating device info %s: %s", self.settings.cpid, boot_info)
-        self._charge_point_vendor = boot_info.get(
-            om.charge_point_vendor.name, None
-        )
-        self._charge_point_model = boot_info.get(om.charge_point_model.name, None)
         await self.async_update_device_info(
             boot_info.get(om.charge_point_serial_number.name, None),
             boot_info.get(om.charge_point_vendor.name, None),

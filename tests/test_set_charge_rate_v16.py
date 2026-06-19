@@ -186,11 +186,9 @@ async def test_cpmax_rejected_txdefault_accepted_returns_true(cp_v16, monkeypatc
     ok = await cp_v16.set_charge_rate(limit_amps=10, conn_id=2)
     assert ok is True
     assert notices == []
-
-
 @pytest.mark.asyncio
-async def test_generated_profile_uses_absolute_start_schedule(cp_v16, monkeypatch):
-    """Generated schedules are immediately valid on chargers that reject empty relative starts."""
+async def test_generated_profile_remains_relative_for_non_juicebox(cp_v16, monkeypatch):
+    """Generated profiles keep upstream relative scheduling for generic chargers."""
 
     async def fake_get_conf(key: str):
         if key == ckey.charging_schedule_allowed_charging_rate_unit.value:
@@ -208,6 +206,45 @@ async def test_generated_profile_uses_absolute_start_schedule(cp_v16, monkeypatc
     async def fake_notify(msg, title="Ocpp integration"):
         return True
 
+    cp_v16._charge_point_vendor = "Generic"
+    cp_v16._charge_point_model = "Wallbox"
+    monkeypatch.setattr(cp_v16, "get_configuration", fake_get_conf)
+    monkeypatch.setattr(cp_v16, "call", fake_call)
+    monkeypatch.setattr(cp_v16, "notify_ha", fake_notify)
+
+    ok = await cp_v16.set_charge_rate(limit_amps=10, conn_id=1)
+
+    assert ok is True
+    profile = sent[0].cs_charging_profiles
+    schedule = profile["chargingSchedule"]
+    assert profile["chargingProfileKind"] == ChargingProfileKindType.relative.value
+    assert "startSchedule" not in schedule
+
+
+@pytest.mark.asyncio
+async def test_generated_profile_uses_absolute_start_schedule_for_juicebox(
+    cp_v16, monkeypatch
+):
+    """JuiceBox-generated schedules include an absolute start time."""
+
+    async def fake_get_conf(key: str):
+        if key == ckey.charging_schedule_allowed_charging_rate_unit.value:
+            return "Current"
+        if key == ckey.charge_profile_max_stack_level.value:
+            return "32"
+        pytest.fail(f"Unexpected get_configuration key: {key}")
+
+    sent = []
+
+    async def fake_call(req):
+        sent.append(req)
+        return SimpleNamespace(status=ChargingProfileStatus.accepted)
+
+    async def fake_notify(msg, title="Ocpp integration"):
+        return True
+
+    cp_v16._charge_point_vendor = "ENEL"
+    cp_v16._charge_point_model = "JuiceBox30_V1"
     monkeypatch.setattr(cp_v16, "get_configuration", fake_get_conf)
     monkeypatch.setattr(cp_v16, "call", fake_call)
     monkeypatch.setattr(cp_v16, "notify_ha", fake_notify)
