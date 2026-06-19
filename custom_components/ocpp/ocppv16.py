@@ -53,8 +53,10 @@ from .enums import (
 )
 
 from .const import (
+    CHARGE_RATE_PROFILE_KINDS,
     CentralSystemSettings,
     ChargerSystemSettings,
+    DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_MEASURAND,
     HA_ENERGY_UNIT,
     MEASURANDS,
@@ -406,20 +408,6 @@ class ChargePoint(cp):
             _LOGGER.debug("ClearChargingProfile raised %s (ignored)", ex)
             return False
 
-    def _is_juicebox_charge_point(self) -> bool:
-        """Return true when the charger identity matches a JuiceBox."""
-        values = [
-            getattr(self, "_charge_point_vendor", None),
-            getattr(self, "_charge_point_model", None),
-        ]
-        metric_get = getattr(getattr(self, "_metrics", None), "get", None)
-        if callable(metric_get):
-            values.extend(
-                getattr(metric_get(key), "value", None)
-                for key in ((0, cdet.vendor.value), (0, cdet.model.value))
-            )
-        return any("juicebox" in str(value).lower() for value in values if value)
-
     async def set_charge_rate(
         self,
         limit_amps: int = 32,
@@ -472,11 +460,14 @@ class ChargePoint(cp):
         except Exception:
             stack_level = 1
 
-        use_absolute_schedule = self._is_juicebox_charge_point()
-        charging_profile_kind = (
-            ChargingProfileKindType.absolute.value
-            if use_absolute_schedule
-            else ChargingProfileKindType.relative.value
+        settings = getattr(self, "settings", None)
+        charging_profile_kind = getattr(
+            settings, "charge_rate_profile_kind", DEFAULT_CHARGE_RATE_PROFILE_KIND
+        )
+        if charging_profile_kind not in CHARGE_RATE_PROFILE_KINDS:
+            charging_profile_kind = DEFAULT_CHARGE_RATE_PROFILE_KIND
+        use_absolute_schedule = (
+            charging_profile_kind == ChargingProfileKindType.absolute.value
         )
 
         # Helper to build a simple schedule with one period

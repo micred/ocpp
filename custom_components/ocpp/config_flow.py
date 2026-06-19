@@ -11,6 +11,8 @@ from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
 from .const import (
+    CHARGE_RATE_PROFILE_KINDS,
+    CONF_CHARGE_RATE_PROFILE_KIND,
     CONF_CPID,
     CONF_CPIDS,
     CONF_CSID,
@@ -32,6 +34,7 @@ from .const import (
     CONF_WEBSOCKET_PING_TIMEOUT,
     CONF_WEBSOCKET_PING_TRIES,
     DEFAULT_CPID,
+    DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_CSID,
     DEFAULT_FORCE_SMART_CHARGING,
     DEFAULT_HOST,
@@ -94,6 +97,9 @@ STEP_USER_CP_DATA_SCHEMA = vol.Schema(
         vol.Required(
             CONF_FORCE_SMART_CHARGING, default=DEFAULT_FORCE_SMART_CHARGING
         ): bool,
+        vol.Required(
+            CONF_CHARGE_RATE_PROFILE_KIND, default=DEFAULT_CHARGE_RATE_PROFILE_KIND
+        ): vol.In(CHARGE_RATE_PROFILE_KINDS),
     }
 )
 

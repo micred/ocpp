@@ -8,10 +8,14 @@ from homeassistant.data_entry_flow import InvalidData
 import pytest
 
 from custom_components.ocpp.const import (
+    CONF_CHARGE_RATE_PROFILE_KIND,
     CONF_NUM_CONNECTORS,
+    DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_NUM_CONNECTORS,
     DOMAIN,
 )
+from custom_components.ocpp.config_flow import STEP_USER_CP_DATA_SCHEMA
+from ocpp.v16.enums import ChargingProfileKindType
 
 from .const import (
     MOCK_CONFIG_CS,
@@ -69,6 +73,23 @@ async def test_successful_config_flow(hass, bypass_get_data):
     assert result["title"] == "test_csid_flow"
     assert result["data"] == MOCK_CONFIG_CS
     assert result["result"]
+
+
+def test_charge_rate_profile_kind_config_schema():
+    """Charger config defaults profile kind to relative and accepts absolute."""
+    cp_input = MOCK_CONFIG_CP.copy()
+    cp_input.pop(CONF_CHARGE_RATE_PROFILE_KIND, None)
+
+    validated = STEP_USER_CP_DATA_SCHEMA(cp_input)
+
+    assert validated[CONF_CHARGE_RATE_PROFILE_KIND] == DEFAULT_CHARGE_RATE_PROFILE_KIND
+
+    cp_input[CONF_CHARGE_RATE_PROFILE_KIND] = ChargingProfileKindType.absolute.value
+    validated = STEP_USER_CP_DATA_SCHEMA(cp_input)
+
+    assert validated[CONF_CHARGE_RATE_PROFILE_KIND] == (
+        ChargingProfileKindType.absolute.value
+    )
 
 
 async def test_successful_discovery_flow(hass, bypass_get_data):

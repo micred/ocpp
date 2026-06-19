@@ -18,7 +18,6 @@ from custom_components.ocpp.ocppv16 import ChargePoint as ChargePointv16
 from custom_components.ocpp.enums import (
     Profiles as prof,
     ConfigurationKey as ckey,
-    HAChargerDetails as cdet,
 )
 from ocpp.v16.enums import (
     ChargingProfileStatus,
@@ -190,8 +189,8 @@ async def test_cpmax_rejected_txdefault_accepted_returns_true(cp_v16, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_generated_profile_remains_relative_for_non_juicebox(cp_v16, monkeypatch):
-    """Generated profiles keep upstream relative scheduling for generic chargers."""
+async def test_generated_profile_remains_relative_by_default(cp_v16, monkeypatch):
+    """Generated profiles keep upstream relative scheduling by default."""
 
     async def fake_get_conf(key: str):
         if key == ckey.charging_schedule_allowed_charging_rate_unit.value:
@@ -209,8 +208,6 @@ async def test_generated_profile_remains_relative_for_non_juicebox(cp_v16, monke
     async def fake_notify(msg, title="Ocpp integration"):
         return True
 
-    cp_v16._charge_point_vendor = "Generic"
-    cp_v16._charge_point_model = "Wallbox"
     monkeypatch.setattr(cp_v16, "get_configuration", fake_get_conf)
     monkeypatch.setattr(cp_v16, "call", fake_call)
     monkeypatch.setattr(cp_v16, "notify_ha", fake_notify)
@@ -225,10 +222,10 @@ async def test_generated_profile_remains_relative_for_non_juicebox(cp_v16, monke
 
 
 @pytest.mark.asyncio
-async def test_generated_profile_uses_absolute_start_schedule_for_juicebox(
+async def test_generated_profile_uses_absolute_start_schedule_when_configured(
     cp_v16, monkeypatch
 ):
-    """JuiceBox-generated schedules include an absolute start time."""
+    """Generated schedules include an absolute start time when configured."""
 
     async def fake_get_conf(key: str):
         if key == ckey.charging_schedule_allowed_charging_rate_unit.value:
@@ -246,10 +243,9 @@ async def test_generated_profile_uses_absolute_start_schedule_for_juicebox(
     async def fake_notify(msg, title="Ocpp integration"):
         return True
 
-    cp_v16._metrics = {
-        (0, cdet.vendor.value): SimpleNamespace(value="ENEL"),
-        (0, cdet.model.value): SimpleNamespace(value="JuiceBox30_V1"),
-    }
+    cp_v16.settings = SimpleNamespace(
+        charge_rate_profile_kind=ChargingProfileKindType.absolute.value
+    )
     monkeypatch.setattr(cp_v16, "get_configuration", fake_get_conf)
     monkeypatch.setattr(cp_v16, "call", fake_call)
     monkeypatch.setattr(cp_v16, "notify_ha", fake_notify)

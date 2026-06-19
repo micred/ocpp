@@ -22,7 +22,8 @@
                     "max_current": "Maximale laadstroom",
                     "meter_interval": "Meetinterval (secondes)",
                     "skip_schema_validation": "Skip OCPP schema validation",
-                    "force_smart_charging": "Functieprofiel Smart Charging forceren"
+                    "force_smart_charging": "Functieprofiel Smart Charging forceren",
+                    "charge_rate_profile_kind": "Laadlimiet profieltype"
                 }
             },
             "measurands": {
