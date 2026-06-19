@@ -10,7 +10,7 @@ Contents
 * [Installation](installation.md)
 * [Supported devices](supported-devices.md)
 * [User guide](user-guide.md)
+* [Known quirks](99_QUIRKS.md)
 * [Support](support.md)
 * [Development](development.md)
 * [Debugging](debugging.md)
-
