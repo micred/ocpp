@@ -301,6 +301,28 @@ async def test_juicebox_meter_fallback_replaces_zero_ocpp_current(
     assert sample == pytest.approx(11.56)
 
 
+@pytest.mark.asyncio
+async def test_juicebox_meter_preferred_over_derived_active_current(
+    cp_v16, monkeypatch
+):
+    """JuiceBox enforcement uses line current instead of power/voltage-derived current."""
+    cp_v16._metrics[(1, Measurand.power_active_import.value)] = Metric(1.72, "kW")
+    cp_v16._metrics[(1, Measurand.voltage.value)] = Metric(232.0, "V")
+    cp_v16._charge_point_vendor = "ENEL"
+    cp_v16._charge_point_model = "JuiceBox30_V1"
+    cp_v16._connection.remote_address = ("192.168.0.8", 12345)
+
+    def fake_fetch(conn_id):
+        assert conn_id == 1
+        return 9.14
+
+    monkeypatch.setattr(cp_v16, "_fetch_juicebox_meter_current_amps", fake_fetch)
+
+    sample = await cp_v16._measure_current_amps_for_enforcement(1)
+
+    assert sample == pytest.approx(9.14)
+
+
 def test_enforcement_helpers_ignore_bad_samples_and_handle_fallbacks(cp_v16):
     """Helper methods tolerate unavailable metrics and legacy edge cases."""
     assert cp_v16._target_connector_id(object()) == 1

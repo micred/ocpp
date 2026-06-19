@@ -670,12 +670,9 @@ class ChargePoint(cp):
     async def _measure_current_amps_for_enforcement(
         self, conn_id: int
     ) -> float | None:
-        """Measure current for enforcement, with JuiceBox local fallback."""
-        current = self._measure_current_amps(conn_id)
-        if current not in (None, 0.0):
-            return current
+        """Measure current for enforcement, preferring JuiceBox line current."""
         if not self._juicebox_meter_url():
-            return current
+            return self._measure_current_amps(conn_id)
 
         hass = getattr(self, "hass", None)
         if hasattr(hass, "async_add_executor_job"):
@@ -686,7 +683,7 @@ class ChargePoint(cp):
             fallback = await asyncio.to_thread(
                 self._fetch_juicebox_meter_current_amps, conn_id
             )
-        return current if fallback is None else fallback
+        return fallback if fallback is not None else self._measure_current_amps(conn_id)
 
     def _charge_rate_reconnect_count(self) -> int:
         """Return the last recorded reconnect count."""
