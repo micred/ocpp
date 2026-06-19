@@ -250,6 +250,57 @@ def test_current_measurement_prefers_current_import_and_falls_back(cp_v16):
     assert cp_v16._measure_current_amps(1) == pytest.approx(30.0)
 
 
+def test_juicebox_meter_payload_updates_current_power_and_voltage(cp_v16):
+    """JuiceBox local meter payloads expose the real per-line charging current."""
+    payload = {
+        "task": [
+            {"name": "Line current L1", "value": "11.56", "suffix": "A"},
+            {"name": "Line current L2", "value": "0.0", "suffix": "A"},
+            {"name": "Line current L3", "value": "0.0", "suffix": "A"},
+            {"name": "Line voltage L1", "value": "227.7", "suffix": "V"},
+            {"name": "Line voltage L2", "value": "0.0", "suffix": "V"},
+            {"name": "Line voltage L3", "value": "0.0", "suffix": "V"},
+            {"name": "Active power L1", "value": "2.308", "suffix": "kW"},
+            {"name": "Active power L2", "value": "0.0", "suffix": "kW"},
+            {"name": "Active power L3", "value": "0.0", "suffix": "kW"},
+        ]
+    }
+
+    assert cp_v16._apply_juicebox_meter_payload(1, payload) == pytest.approx(11.56)
+    assert cp_v16._metrics[(1, Measurand.current_import.value)].value == pytest.approx(
+        11.56
+    )
+    assert cp_v16._metrics[(1, Measurand.current_import.value)].unit == "A"
+    assert cp_v16._metrics[(1, Measurand.current_import.value)].extra_attr["L1"] == (
+        pytest.approx(11.56)
+    )
+    assert cp_v16._metrics[(1, Measurand.power_active_import.value)].value == (
+        pytest.approx(2.308)
+    )
+    assert cp_v16._metrics[(1, Measurand.voltage.value)].value == pytest.approx(227.7)
+
+
+@pytest.mark.asyncio
+async def test_juicebox_meter_fallback_replaces_zero_ocpp_current(
+    cp_v16, monkeypatch
+):
+    """JuiceBox enforcement uses the local meter when core OCPP samples are zero."""
+    cp_v16._metrics[(1, Measurand.current_import.value)] = Metric(0.0, "A")
+    cp_v16._charge_point_vendor = "ENEL"
+    cp_v16._charge_point_model = "JuiceBox30_V1"
+    cp_v16._connection.remote_address = ("192.168.0.8", 12345)
+
+    def fake_fetch(conn_id):
+        assert conn_id == 1
+        return 11.56
+
+    monkeypatch.setattr(cp_v16, "_fetch_juicebox_meter_current_amps", fake_fetch)
+
+    sample = await cp_v16._measure_current_amps_for_enforcement(1)
+
+    assert sample == pytest.approx(11.56)
+
+
 def test_enforcement_helpers_ignore_bad_samples_and_handle_fallbacks(cp_v16):
     """Helper methods tolerate unavailable metrics and legacy edge cases."""
     assert cp_v16._target_connector_id(object()) == 1

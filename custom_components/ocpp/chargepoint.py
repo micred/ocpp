@@ -6,11 +6,14 @@ from collections.abc import MutableMapping
 import contextlib
 from dataclasses import dataclass, field
 from enum import Enum
+import json
 import logging
 from math import sqrt
 import secrets
 import string
 import time
+import urllib.error
+import urllib.request
 
 from homeassistant.components.persistent_notification import DOMAIN as PN_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -553,6 +556,138 @@ class ChargePoint(cp):
         power_watts = power * 1000 if unit == "kw" else power
         return power_watts / voltage
 
+    def _juicebox_meter_url(self) -> str | None:
+        """Return the local JuiceBox meter endpoint when it is safe to use."""
+        settings = getattr(self, "settings", None)
+        configured = getattr(settings, "juicebox_meter_url", None) or getattr(
+            settings, "meter_url", None
+        )
+        if configured:
+            return str(configured)
+
+        vendor = str(getattr(self, "_charge_point_vendor", "") or "").lower()
+        model = str(getattr(self, "_charge_point_model", "") or "").lower()
+        cpid = str(getattr(self, "id", "") or "").lower()
+        if "juicebox" not in model and not (
+            "enel" in vendor and "juicebox" in cpid
+        ):
+            return None
+
+        connection = getattr(self, "_connection", None)
+        remote_address = getattr(connection, "remote_address", None)
+        host = None
+        if isinstance(remote_address, tuple) and remote_address:
+            host = remote_address[0]
+        elif isinstance(remote_address, str) and remote_address:
+            host = remote_address.rsplit(":", 1)[0]
+        if not host:
+            return None
+        return f"http://{host}/admin/task.php?source=tem"
+
+    @staticmethod
+    def _juicebox_line_value(rows: list[dict], name: str) -> float | None:
+        """Read one numeric value from a JuiceBox task.php response."""
+        for row in rows:
+            if row.get("name") != name:
+                continue
+            try:
+                return float(row.get("value"))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _apply_juicebox_meter_payload(
+        self, conn_id: int, payload: dict
+    ) -> float | None:
+        """Publish JuiceBox local meter values and return max line current."""
+        rows = payload.get("task")
+        if not isinstance(rows, list):
+            return None
+
+        conn = self._target_connector_id(conn_id)
+        currents = {
+            phase: self._juicebox_line_value(rows, f"Line current {phase}")
+            for phase in ("L1", "L2", "L3")
+        }
+        current_values = [value for value in currents.values() if value is not None]
+        if not current_values:
+            return None
+        current_amps = max(current_values)
+
+        current_metric = self._metrics[(conn, Measurand.current_import.value)]
+        current_metric.value = current_amps
+        current_metric.unit = "A"
+        current_extra = current_metric.extra_attr
+        if not isinstance(current_extra, dict):
+            current_extra = {}
+        current_extra.update(
+            {
+                phase: value
+                for phase, value in currents.items()
+                if value is not None
+            }
+        )
+        current_extra["source"] = "juicebox_local_meter"
+        current_metric.extra_attr = current_extra
+
+        powers = [
+            self._juicebox_line_value(rows, f"Active power {phase}")
+            for phase in ("L1", "L2", "L3")
+        ]
+        power_values = [value for value in powers if value is not None]
+        if power_values:
+            power_metric = self._metrics[(conn, Measurand.power_active_import.value)]
+            power_metric.value = sum(power_values)
+            power_metric.unit = HA_POWER_UNIT
+
+        voltages = [
+            self._juicebox_line_value(rows, f"Line voltage {phase}")
+            for phase in ("L1", "L2", "L3")
+        ]
+        voltage_values = [
+            value for value in voltages if value is not None and value != 0.0
+        ]
+        if voltage_values:
+            voltage_metric = self._metrics[(conn, Measurand.voltage.value)]
+            voltage_metric.value = sum(voltage_values) / len(voltage_values)
+            voltage_metric.unit = "V"
+
+        return current_amps
+
+    def _fetch_juicebox_meter_current_amps(self, conn_id: int) -> float | None:
+        """Fetch current from the JuiceBox local web meter endpoint."""
+        url = self._juicebox_meter_url()
+        if not url:
+            return None
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                payload = json.load(response)
+        except (OSError, ValueError, urllib.error.URLError) as ex:
+            _LOGGER.debug("Unable to fetch JuiceBox local meter data: %s", ex)
+            return None
+        return self._apply_juicebox_meter_payload(conn_id, payload)
+
+    async def _measure_current_amps_for_enforcement(
+        self, conn_id: int
+    ) -> float | None:
+        """Measure current for enforcement, with JuiceBox local fallback."""
+        current = self._measure_current_amps(conn_id)
+        if current not in (None, 0.0):
+            return current
+        if not self._juicebox_meter_url():
+            return current
+
+        hass = getattr(self, "hass", None)
+        if hasattr(hass, "async_add_executor_job"):
+            fallback = await hass.async_add_executor_job(
+                self._fetch_juicebox_meter_current_amps, conn_id
+            )
+        else:
+            fallback = await asyncio.to_thread(
+                self._fetch_juicebox_meter_current_amps, conn_id
+            )
+        return current if fallback is None else fallback
+
     def _charge_rate_reconnect_count(self) -> int:
         """Return the last recorded reconnect count."""
         try:
@@ -650,7 +785,7 @@ class ChargePoint(cp):
             or current_boot_generation != state.last_boot_generation
         )
 
-        sample = self._measure_current_amps(conn)
+        sample = await self._measure_current_amps_for_enforcement(conn)
         if sample is not None:
             self._record_charge_rate_sample(state, sample)
 

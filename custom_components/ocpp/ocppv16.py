@@ -929,6 +929,10 @@ class ChargePoint(cp):
         """Update device info asynchronuously."""
 
         _LOGGER.debug("Updating device info %s: %s", self.settings.cpid, boot_info)
+        self._charge_point_vendor = boot_info.get(
+            om.charge_point_vendor.name, None
+        )
+        self._charge_point_model = boot_info.get(om.charge_point_model.name, None)
         await self.async_update_device_info(
             boot_info.get(om.charge_point_serial_number.name, None),
             boot_info.get(om.charge_point_vendor.name, None),
