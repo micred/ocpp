@@ -669,6 +669,36 @@ class ChargePoint(cp):
 
     async def start_transaction(self, connector_id: int = 1):
         """Remote start a transaction."""
+        # A charger that is already charging (e.g. a session authorised locally
+        # at the unit) typically rejects a RemoteStartTransaction. The charge
+        # control switch is already "on" in that state, so treat the request as
+        # a success no-op instead of surfacing the charger's "Rejected" reply.
+        # The connector counts as already charging when it reports a charging
+        # status, or - for chargers that stream MeterValues for a local session
+        # without an OCPP status/transaction - when it is importing current.
+        status = self._metrics[(connector_id, cstat.status_connector.value)].value
+        current = self._metrics[(connector_id, Measurand.current_import.value)].value
+        try:
+            importing_current = current is not None and float(current) > 0
+        except (TypeError, ValueError):
+            importing_current = False
+        if (
+            status
+            in (
+                ChargePointStatus.charging.value,
+                ChargePointStatus.suspended_ev.value,
+                ChargePointStatus.suspended_evse.value,
+            )
+            or importing_current
+        ):
+            _LOGGER.debug(
+                "Connector %s already charging (status=%s, current=%s); "
+                "skipping RemoteStartTransaction",
+                connector_id,
+                status,
+                current,
+            )
+            return True
         _LOGGER.info("Start transaction with remote ID tag: %s", self._remote_id_tag)
         req = call.RemoteStartTransaction(
             connector_id=connector_id, id_tag=self._remote_id_tag
