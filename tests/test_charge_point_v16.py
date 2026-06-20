@@ -1502,9 +1502,9 @@ async def test_get_diagnostics_and_data_transfer_v16(
             service_data={"devid": cpid, "upload_url": "not-a-valid-url"},
             blocking=True,
         )
-        assert any(
-            "Failed to parse url" in rec.message for rec in caplog.records
-        ), "Expected warning for invalid diagnostics upload_url not found"
+        assert any("Failed to parse url" in rec.message for rec in caplog.records), (
+            "Expected warning for invalid diagnostics upload_url not found"
+        )
 
         # --- get_diagnostics: FW profile NOT supported branch ---
         # Simulate that FirmwareManagement profile is not supported by the CP
@@ -2188,9 +2188,9 @@ async def test_current_import_phase_extra_attrs_single_and_multi_connector(
             if num_connectors == 1:
                 # Without connector_id -> should resolve (fallback) to connector 1
                 attrs = cs.get_extra_attr(cp_id, "Current.Import", connector_id=None)
-                assert (
-                    attrs is not None
-                ), "Expected extra_attr dict for single-connector"
+                assert attrs is not None, (
+                    "Expected extra_attr dict for single-connector"
+                )
                 assert attrs.get("L1") == 5.0
                 assert attrs.get("L2") == 7.0
                 assert attrs.get("L3") == 8.0
@@ -2207,9 +2207,9 @@ async def test_current_import_phase_extra_attrs_single_and_multi_connector(
                 attrs1 = cs.get_extra_attr(cp_id, "Current.Import", connector_id=1)
                 attrs2 = cs.get_extra_attr(cp_id, "Current.Import", connector_id=2)
 
-                assert (
-                    attrs1 is not None and attrs2 is not None
-                ), "Expected extra_attr dicts for both connectors"
+                assert attrs1 is not None and attrs2 is not None, (
+                    "Expected extra_attr dicts for both connectors"
+                )
 
                 # Connector 1 values
                 assert attrs1.get("L1") == 5.0
@@ -2221,6 +2221,84 @@ async def test_current_import_phase_extra_attrs_single_and_multi_connector(
                 assert attrs2.get("L2") == 13.0
                 assert attrs2.get("L3") == 17.0
 
+        finally:
+            cp_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cp_task
+            await ws.close()
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize(
+    "setup_config_entry",
+    [{"port": 9079, "cp_id": "CP_susp_mv", "cms": "cms_susp_mv"}],
+    indirect=True,
+)
+@pytest.mark.parametrize("cp_id", ["CP_susp_mv"])
+@pytest.mark.parametrize("port", [9079])
+async def test_suspended_status_keeps_reported_meter_values(
+    hass, socket_enabled, cp_id, port, setup_config_entry
+):
+    """A Suspended status must not overwrite charger-reported measurands.
+
+    Some chargers report a Suspended connector status while the meter is still
+    measuring current (or before they emit the next MeterValues). Forcing those
+    measurands to 0 from the status makes e.g. ``current_import`` read 0 A while
+    the vehicle is actually charging. The charger's own MeterValues are the
+    source of truth and already report 0 when current truly stops.
+    """
+    cs: CentralSystem = setup_config_entry
+
+    async with websockets.connect(
+        f"ws://127.0.0.1:{port}/{cp_id}", subprotocols=["ocpp1.6"]
+    ) as ws:
+        cp = ChargePoint(f"{cp_id}_client", ws)
+        cp_task = asyncio.create_task(cp.start())
+        try:
+            await cp.send_boot_notification()
+            await wait_ready(cs.charge_points[cp_id])
+
+            # Charger reports current via MeterValues (single-phase: L1).
+            await cp.call(
+                call.MeterValues(
+                    connector_id=1,
+                    meter_value=[
+                        {
+                            "timestamp": datetime.now(UTC).isoformat(),
+                            "sampledValue": [
+                                {
+                                    "measurand": "Current.Import",
+                                    "phase": "L1",
+                                    "unit": "A",
+                                    "value": "9.2",
+                                },
+                                {
+                                    "measurand": "Power.Active.Import",
+                                    "unit": "W",
+                                    "value": "2120",
+                                },
+                            ],
+                        }
+                    ],
+                )
+            )
+            await asyncio.sleep(0)
+            assert cs.get_metric(cp_id, "Current.Import") == 9.2
+
+            # Charger now reports SuspendedEV while still drawing current.
+            await cp.call(
+                call.StatusNotification(
+                    connector_id=1,
+                    error_code="NoError",
+                    status="SuspendedEV",
+                    timestamp=datetime.now(UTC).isoformat(),
+                )
+            )
+            await asyncio.sleep(0)
+
+            # The actively-measured current must survive (not forced to 0).
+            assert cs.get_metric(cp_id, "Current.Import") == 9.2
+            assert cs.get_metric(cp_id, "Power.Active.Import") == 2.12
         finally:
             cp_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

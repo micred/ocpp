@@ -1068,6 +1068,11 @@ class ChargePoint(cp):
                 ChargePointStatus.suspended_ev.value,
                 ChargePointStatus.suspended_evse.value,
             ):
+                # Only synthesise a zero for measurands the charger does not
+                # report itself. Chargers that send these in MeterValues are the
+                # source of truth (they report 0 when current actually stops), so
+                # overwriting them here can wrongly show 0 A while still charging.
+                reported = self._metervalues_measurands.get(connector_id, set())
                 for meas in [
                     Measurand.current_import.value,
                     Measurand.power_active_import.value,
@@ -1076,7 +1081,7 @@ class ChargePoint(cp):
                     Measurand.power_active_export.value,
                     Measurand.power_reactive_export.value,
                 ]:
-                    if meas in self._metrics[connector_id]:
+                    if meas in self._metrics[connector_id] and meas not in reported:
                         self._metrics[(connector_id, meas)].value = 0
 
         self.hass.async_create_task(self.update(self.settings.cpid))
