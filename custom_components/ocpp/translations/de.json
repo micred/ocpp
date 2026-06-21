@@ -27,6 +27,7 @@
                     "idle_interval": "Abtastintervall Leerlauf (Sekunden)",
                     "skip_schema_validation": "Überspringe OCPP-Schemavalidierung",
                     "force_smart_charging": "Erzwinge Smart Charging Funktionsprofil",
+                    "charge_rate_profile_kind": "Ladeprofilart fuer Strombegrenzung",
                     "monitored_variables_autoconfig": "Automatische Erkennung der OCPP-Messwerte"
                 }
             },
@@ -65,6 +66,26 @@
         },
         "abort": {
             "single_instance_allowed": "Es ist nur eine Instanz erlaubt."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "OCPP Ladepunkt Optionen",
+                "data": {
+                    "charge_point_id": "Ladepunkt"
+                }
+            },
+            "charge_rate_profile": {
+                "title": "Ladeprofil",
+                "data": {
+                    "charge_rate_profile_kind": "Ladeprofilart fuer Strombegrenzung"
+                }
+            }
+        },
+        "abort": {
+            "no_chargers_configured": "Es sind keine Ladepunkte konfiguriert",
+            "charger_not_found": "Ladepunkt wurde nicht gefunden"
         }
     }
 }

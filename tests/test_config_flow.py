@@ -1,5 +1,6 @@
 """Test ocpp config flow."""
 
+from copy import deepcopy
 from unittest.mock import patch
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -8,10 +9,14 @@ from homeassistant.data_entry_flow import InvalidData
 import pytest
 
 from custom_components.ocpp.const import (
+    CONF_CHARGE_RATE_PROFILE_KIND,
     CONF_NUM_CONNECTORS,
+    DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_NUM_CONNECTORS,
     DOMAIN,
 )
+from custom_components.ocpp.config_flow import STEP_USER_CP_DATA_SCHEMA
+from ocpp.v16.enums import ChargingProfileKindType
 
 from .const import (
     MOCK_CONFIG_CS,
@@ -69,6 +74,23 @@ async def test_successful_config_flow(hass, bypass_get_data):
     assert result["title"] == "test_csid_flow"
     assert result["data"] == MOCK_CONFIG_CS
     assert result["result"]
+
+
+def test_charge_rate_profile_kind_config_schema():
+    """Charger config defaults profile kind to relative and accepts absolute."""
+    cp_input = MOCK_CONFIG_CP.copy()
+    cp_input.pop(CONF_CHARGE_RATE_PROFILE_KIND, None)
+
+    validated = STEP_USER_CP_DATA_SCHEMA(cp_input)
+
+    assert validated[CONF_CHARGE_RATE_PROFILE_KIND] == DEFAULT_CHARGE_RATE_PROFILE_KIND
+
+    cp_input[CONF_CHARGE_RATE_PROFILE_KIND] = ChargingProfileKindType.absolute.value
+    validated = STEP_USER_CP_DATA_SCHEMA(cp_input)
+
+    assert validated[CONF_CHARGE_RATE_PROFILE_KIND] == (
+        ChargingProfileKindType.absolute.value
+    )
 
 
 async def test_successful_discovery_flow(hass, bypass_get_data):
@@ -148,6 +170,42 @@ async def test_successful_discovery_flow(hass, bypass_get_data):
     assert result_cp2["type"] == data_entry_flow.FlowResultType.ABORT
     # Check there are 2 cpid entries
     assert len(entry.data[CONF_CPIDS]) == 2
+
+
+async def test_charge_rate_profile_kind_options_flow_updates_existing_charger(hass):
+    """Test an existing charger exposes charge profile kind in options."""
+    entry_data = deepcopy(MOCK_CONFIG_FLOW)
+    entry_data[CONF_CPIDS][0]["test_cp_id"].pop(CONF_CHARGE_RATE_PROFILE_KIND)
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=entry_data,
+        entry_id="test_cms_options",
+        title="test_cms_options",
+        version=2,
+        minor_version=1,
+    )
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "charge_rate_profile"
+    assert CONF_CHARGE_RATE_PROFILE_KIND in [
+        key.schema for key in result["data_schema"].schema
+    ]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_CHARGE_RATE_PROFILE_KIND: ChargingProfileKindType.absolute.value
+        },
+    )
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert config_entry.data[CONF_CPIDS][0]["test_cp_id"][
+        CONF_CHARGE_RATE_PROFILE_KIND
+    ] == ChargingProfileKindType.absolute.value
 
 
 async def test_duplicate_cpid_discovery_flow(hass, bypass_get_data):

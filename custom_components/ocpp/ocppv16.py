@@ -53,8 +53,10 @@ from .enums import (
 )
 
 from .const import (
+    CHARGE_RATE_PROFILE_KINDS,
     CentralSystemSettings,
     ChargerSystemSettings,
+    DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_MEASURAND,
     HA_ENERGY_UNIT,
     MEASURANDS,
@@ -458,14 +460,31 @@ class ChargePoint(cp):
         except Exception:
             stack_level = 1
 
-        # Helper to build a simple relative schedule with one period
+        settings = getattr(self, "settings", None)
+        charging_profile_kind = getattr(
+            settings, "charge_rate_profile_kind", DEFAULT_CHARGE_RATE_PROFILE_KIND
+        )
+        if charging_profile_kind not in CHARGE_RATE_PROFILE_KINDS:
+            charging_profile_kind = DEFAULT_CHARGE_RATE_PROFILE_KIND
+        use_absolute_schedule = (
+            charging_profile_kind == ChargingProfileKindType.absolute.value
+        )
+
+        # Helper to build a simple schedule with one period
         def _mk_schedule(_units: str, _limit: float) -> dict:
-            return {
+            schedule = {
                 om.charging_rate_unit.value: _units,
                 om.charging_schedule_period.value: [
                     {om.start_period.value: 0, om.limit.value: _limit}
                 ],
             }
+            if use_absolute_schedule:
+                schedule["startSchedule"] = (
+                    datetime.now(tz=UTC)
+                    .replace(microsecond=0)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+            return schedule
 
         # Helper to generate a unique, stable chargingProfileId per purpose+connector
         def _profile_id(purpose: str, cid: int) -> int:
@@ -489,7 +508,7 @@ class ChargePoint(cp):
                         ChargingProfilePurposeType.charge_point_max_profile.value, 0
                     ),
                     om.stack_level.value: stack_level,
-                    om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
+                    om.charging_profile_kind.value: charging_profile_kind,
                     om.charging_profile_purpose.value: ChargingProfilePurposeType.charge_point_max_profile.value,
                     om.charging_schedule.value: _mk_schedule(units_value, limit_value),
                 },
@@ -527,7 +546,7 @@ class ChargePoint(cp):
                             ChargingProfilePurposeType.tx_profile.value, target_cid
                         ),
                         om.stack_level.value: txp_stack,
-                        om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
+                        om.charging_profile_kind.value: charging_profile_kind,
                         om.charging_profile_purpose.value: ChargingProfilePurposeType.tx_profile.value,
                         om.charging_schedule.value: _mk_schedule(
                             units_value, limit_value
@@ -556,7 +575,7 @@ class ChargePoint(cp):
                         ChargingProfilePurposeType.tx_default_profile.value, target_cid
                     ),
                     om.stack_level.value: tx_stack,
-                    om.charging_profile_kind.value: ChargingProfileKindType.relative.value,
+                    om.charging_profile_kind.value: charging_profile_kind,
                     om.charging_profile_purpose.value: ChargingProfilePurposeType.tx_default_profile.value,
                     om.charging_schedule.value: _mk_schedule(units_value, limit_value),
                 },

@@ -1,16 +1,20 @@
 """Adds config flow for ocpp."""
 
+from copy import deepcopy
 from typing import Any
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
     CONN_CLASS_LOCAL_PUSH,
+    OptionsFlow,
 )
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
 from .const import (
+    CHARGE_RATE_PROFILE_KINDS,
+    CONF_CHARGE_RATE_PROFILE_KIND,
     CONF_CPID,
     CONF_CPIDS,
     CONF_CSID,
@@ -32,6 +36,7 @@ from .const import (
     CONF_WEBSOCKET_PING_TIMEOUT,
     CONF_WEBSOCKET_PING_TRIES,
     DEFAULT_CPID,
+    DEFAULT_CHARGE_RATE_PROFILE_KIND,
     DEFAULT_CSID,
     DEFAULT_FORCE_SMART_CHARGING,
     DEFAULT_HOST,
@@ -54,6 +59,8 @@ from .const import (
     DOMAIN,
     MEASURANDS,
 )
+
+CONF_CHARGE_POINT_ID = "charge_point_id"
 
 STEP_USER_CS_DATA_SCHEMA = vol.Schema(
     {
@@ -94,6 +101,9 @@ STEP_USER_CP_DATA_SCHEMA = vol.Schema(
         vol.Required(
             CONF_FORCE_SMART_CHARGING, default=DEFAULT_FORCE_SMART_CHARGING
         ): bool,
+        vol.Required(
+            CONF_CHARGE_RATE_PROFILE_KIND, default=DEFAULT_CHARGE_RATE_PROFILE_KIND
+        ): vol.In(CHARGE_RATE_PROFILE_KINDS),
     }
 )
 
@@ -111,6 +121,11 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 2
     MINOR_VERSION = 1
     CONNECTION_CLASS = CONN_CLASS_LOCAL_PUSH
+
+    @staticmethod
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
     def __init__(self):
         """Initialize."""
@@ -230,4 +245,114 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="measurands",
             data_schema=STEP_USER_MEASURANDS_SCHEMA,
             errors=errors,
+        )
+
+
+class OptionsFlowHandler(OptionsFlow):
+    """Handle OCPP options."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._entry_id = config_entry.entry_id
+        self._initial_entry = config_entry
+        self._cp_id: str | None = None
+
+    @property
+    def _entry(self) -> ConfigEntry:
+        """Return the current config entry."""
+        if self.hass is not None:
+            return (
+                self.hass.config_entries.async_get_entry(self._entry_id)
+                or self._initial_entry
+            )
+        return self._initial_entry
+
+    def _chargers(self) -> list[tuple[str, dict[str, Any]]]:
+        """Return configured charger id and data pairs."""
+        chargers: list[tuple[str, dict[str, Any]]] = []
+        for cp_map in self._entry.data.get(CONF_CPIDS, []):
+            if not isinstance(cp_map, dict):
+                continue
+            for cp_id, cp_data in cp_map.items():
+                if isinstance(cp_data, dict):
+                    chargers.append((cp_id, cp_data))
+        return chargers
+
+    def _charger_data(self) -> dict[str, Any] | None:
+        """Return selected charger data."""
+        for cp_id, cp_data in self._chargers():
+            if cp_id == self._cp_id:
+                return cp_data
+        return None
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select a charger when multiple chargers are configured."""
+        chargers = self._chargers()
+        if not chargers:
+            return self.async_abort(reason="no_chargers_configured")
+
+        if len(chargers) == 1:
+            self._cp_id = chargers[0][0]
+            return await self.async_step_charge_rate_profile(user_input)
+
+        if user_input is not None:
+            self._cp_id = user_input[CONF_CHARGE_POINT_ID]
+            return await self.async_step_charge_rate_profile()
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CHARGE_POINT_ID): vol.In(
+                        [cp_id for cp_id, _ in chargers]
+                    )
+                }
+            ),
+        )
+
+    async def async_step_charge_rate_profile(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure generated charge rate profile kind."""
+        cp_data = self._charger_data()
+        if cp_data is None:
+            return self.async_abort(reason="charger_not_found")
+
+        if user_input is not None:
+            updated_data = deepcopy(dict(self._entry.data))
+            cpids = updated_data.get(CONF_CPIDS, [])
+            for idx, cp_map in enumerate(cpids):
+                if self._cp_id in cp_map:
+                    cpids[idx] = {
+                        **cp_map,
+                        self._cp_id: {
+                            **cp_map[self._cp_id],
+                            CONF_CHARGE_RATE_PROFILE_KIND: user_input[
+                                CONF_CHARGE_RATE_PROFILE_KIND
+                            ],
+                        },
+                    }
+                    break
+
+            updated_data[CONF_CPIDS] = cpids
+            self.hass.config_entries.async_update_entry(self._entry, data=updated_data)
+            return self.async_create_entry(title="", data={})
+
+        current_kind = cp_data.get(
+            CONF_CHARGE_RATE_PROFILE_KIND, DEFAULT_CHARGE_RATE_PROFILE_KIND
+        )
+        if current_kind not in CHARGE_RATE_PROFILE_KINDS:
+            current_kind = DEFAULT_CHARGE_RATE_PROFILE_KIND
+
+        return self.async_show_form(
+            step_id="charge_rate_profile",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_CHARGE_RATE_PROFILE_KIND, default=current_kind
+                    ): vol.In(CHARGE_RATE_PROFILE_KINDS)
+                }
+            ),
         )

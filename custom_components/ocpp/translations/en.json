@@ -27,7 +27,8 @@
                     "monitored_variables_autoconfig": "Automatic detection of OCPP Measurands",
                     "idle_interval": "Charger idle sampling interval (seconds)",
                     "skip_schema_validation": "Skip OCPP schema validation",
-                    "force_smart_charging": "Force Smart Charging feature profile"
+                    "force_smart_charging": "Force Smart Charging feature profile",
+                    "charge_rate_profile_kind": "Charge rate profile kind"
                 }
             },
             "measurands": {
@@ -67,6 +68,26 @@
         "abort": {
             "single_instance_allowed": "Only a single instance is allowed",
             "reauth_successful": "New charger configured"
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "OCPP Charger Options",
+                "data": {
+                    "charge_point_id": "Charge point"
+                }
+            },
+            "charge_rate_profile": {
+                "title": "Charge Rate Profile",
+                "data": {
+                    "charge_rate_profile_kind": "Charge rate profile kind"
+                }
+            }
+        },
+        "abort": {
+            "no_chargers_configured": "No chargers are configured",
+            "charger_not_found": "Charger was not found"
         }
     },
     "exceptions": {

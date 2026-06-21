@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import homeassistant.components.input_number as input_number
 from homeassistant.components.sensor import SensorDeviceClass
 import homeassistant.const as ha
-from ocpp.v16.enums import Measurand, UnitOfMeasure
+from ocpp.v16.enums import ChargingProfileKindType, Measurand, UnitOfMeasure
 
 CONF_AUTH_LIST = "authorization_list"
 CONF_AUTH_STATUS = "authorization_status"
@@ -14,6 +14,7 @@ CONF_CPI = "charge_point_identity"
 CONF_CPID = "cpid"
 CONF_CPIDS = "cpids"
 CONF_CSID = "csid"
+CONF_CHARGE_RATE_PROFILE_KIND = "charge_rate_profile_kind"
 CONF_DEFAULT_AUTH_STATUS = "default_authorization_status"
 CONF_HOST = ha.CONF_HOST
 CONF_ID_TAG = "id_tag"
@@ -44,6 +45,7 @@ CONF_WEBSOCKET_PING_TIMEOUT = "websocket_ping_timeout"
 DATA_UPDATED = "ocpp_data_updated"
 DEFAULT_CSID = "central"
 DEFAULT_CPID = "charger"
+DEFAULT_CHARGE_RATE_PROFILE_KIND = ChargingProfileKindType.relative.value
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_MAX_CURRENT = 32
 DEFAULT_NUM_CONNECTORS = 1
@@ -61,6 +63,10 @@ DEFAULT_WEBSOCKET_CLOSE_TIMEOUT = 10
 DEFAULT_WEBSOCKET_PING_TRIES = 2
 DEFAULT_WEBSOCKET_PING_INTERVAL = 20
 DEFAULT_WEBSOCKET_PING_TIMEOUT = 20
+CHARGE_RATE_PROFILE_KINDS = [
+    ChargingProfileKindType.relative.value,
+    ChargingProfileKindType.absolute.value,
+]
 DOMAIN = "ocpp"
 CONFIG = "config"
 ICON = "mdi:ev-station"
@@ -152,6 +158,7 @@ class ChargerSystemSettings:
     monitored_variables_autoconfig: bool
     skip_schema_validation: bool
     force_smart_charging: bool
+    charge_rate_profile_kind: str = DEFAULT_CHARGE_RATE_PROFILE_KIND
     connection: int | None = None  # number of this connection in central server
     num_connectors: int = DEFAULT_NUM_CONNECTORS
 
