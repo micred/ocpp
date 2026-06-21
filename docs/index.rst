@@ -17,6 +17,7 @@ Table of Contents
    installation
    supported-devices
    user-guide
+   99_QUIRKS
    support
    debugging
    development

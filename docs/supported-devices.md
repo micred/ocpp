@@ -106,6 +106,18 @@ match transactions and it won't report some meter values such as session time.
 
 ## [Garo Entity Pro](https://www.garo.se/en/professional/products/e-mobility/wallbox/entity-pro/wallbox-entity-pro-22-sigi-o)
 
+## JuiceBox
+
+Tested JuiceBox chargers apply OCPP 1.6 charging current limits only when the
+generated charging profile uses `chargingProfileKind = Absolute`. A generated
+`Relative` profile may be accepted by the charger but does not reliably change
+the effective line current.
+
+When using `ocpp.set_charge_rate` or the maximum current entity with a JuiceBox,
+open the OCPP integration options for the charge point and set **Charge rate
+profile kind** to `Absolute`. Leave other chargers on the default `Relative`
+setting unless their firmware also requires absolute schedules.
+
 ## [MaXpeedingrods Ev Charger](https://www.maxpeedingrods.com/category/ev-charger.html)
 
 ## [Mennekes Amtron Charge Control](https://www.mennekes.de/emobility/produkte/charge-control/)
