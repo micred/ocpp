@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 import websockets
+from websockets.protocol import State
 
 from custom_components.ocpp.api import CentralSystem
 from custom_components.ocpp.button import BUTTONS
@@ -1577,30 +1578,35 @@ async def test_monitor_connection_timeout_branch(
 
         monkeypatch.setattr(cp_mod.asyncio, "sleep", fast_sleep, raising=True)
 
-        # First wait_for returns a never-finishing "pong waiter",
-        # second wait_for raises TimeoutError -> hits the except branch
-        calls = {"n": 0}
+        # A charger whose pong is never matched (e.g. a non-RFC6455 pong that
+        # does not echo the ping payload) makes the pong wait time out on every
+        # cycle. This must NOT tear the connection down - doing so disconnects a
+        # healthy charger and causes a reconnect storm. The receive loop in
+        # start() is what detects genuinely dead connections.
+        class _FakeConn:
+            def __init__(self, open_cycles):
+                self._open_cycles = open_cycles
+                self.closed = False
 
-        async def fake_wait_for(awaitable, timeout):
-            calls["n"] += 1
-            if inspect.iscoroutine(awaitable):
-                awaitable.close()
-            if calls["n"] == 1:
+            @property
+            def state(self):
+                return State.OPEN if self._open_cycles > 0 else State.CLOSED
 
-                class _NeverFinishes:
-                    def __await__(self):
-                        fut = asyncio.get_event_loop().create_future()
-                        return fut.__await__()
+            async def ping(self):
+                # consume one monitor cycle and hand back a pong waiter that
+                # never resolves, so the pong wait times out.
+                self._open_cycles -= 1
+                return asyncio.get_event_loop().create_future()
 
-                return _NeverFinishes()
-            raise TimeoutError
+            async def close(self):
+                self.closed = True
 
-        monkeypatch.setattr(cp_mod.asyncio, "wait_for", fake_wait_for, raising=True)
+        fake = _FakeConn(open_cycles=3)
+        srv_cp._connection = fake
 
-        # Make the code raise on first timeout
         srv_cp.cs_settings.websocket_ping_interval = 0.0
         srv_cp.cs_settings.websocket_ping_timeout = 0.01
-        srv_cp.cs_settings.websocket_ping_tries = 0  # => > tries -> raise
+        srv_cp.cs_settings.websocket_ping_tries = 0  # tries exceeded every cycle
 
         srv_cp.post_connect_success = True
 
@@ -1610,10 +1616,10 @@ async def test_monitor_connection_timeout_branch(
         monkeypatch.setattr(srv_cp, "post_connect", noop, raising=True)
         monkeypatch.setattr(srv_cp, "set_availability", noop, raising=True)
 
-        with pytest.raises(TimeoutError):
-            await srv_cp.monitor_connection()
-
-        assert calls["n"] >= 2  # both wait_for calls were exercised
+        # Must return normally (no raise) once the connection closes, and must
+        # never have closed the connection itself.
+        await srv_cp.monitor_connection()
+        assert fake.closed is False
 
         cp_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

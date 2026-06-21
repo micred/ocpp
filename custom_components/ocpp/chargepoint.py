@@ -518,13 +518,24 @@ class ChargePoint(cp):
                 self._metrics[(0, cstat.latency_ping.value)].value = latency_ping
                 self._metrics[(0, cstat.latency_pong.value)].value = latency_pong
 
+                # A pong timeout is NOT a reliable death signal and must not
+                # tear the connection down. Some chargers reply to a WebSocket
+                # ping with a non-RFC6455 pong (one that does not echo the ping
+                # payload), which the websockets library cannot match to the
+                # outstanding ping, so this wait times out on every cycle even
+                # though the charger is alive and still sending OCPP traffic.
+                # Closing here would disconnect a healthy charger and cause a
+                # reconnect storm. Genuinely dead connections are detected by the
+                # receive loop in start() (recv() raises ConnectionClosed). Keep
+                # the latency metric advisory and carry on.
                 if timeout_counter > self.cs_settings.websocket_ping_tries:
                     _LOGGER.debug(
-                        f"Connection to '{self.id}' timed out after '{self.cs_settings.websocket_ping_tries}' ping tries",
+                        f"No matching pong from '{self.id}' after "
+                        f"'{self.cs_settings.websocket_ping_tries}' ping tries; "
+                        "keeping connection (receive loop detects real closes)",
                     )
-                    raise timeout_exception
-                else:
-                    continue
+                    timeout_counter = 0
+                continue
             except Exception as ex:
                 _LOGGER.debug(f"monitor_connection stopping due to exception: {ex}")
                 break
