@@ -270,6 +270,10 @@ class ChargePoint(cp):
         self.post_connect_success = False
         self.tasks = None
         self._charger_reports_session_energy = False
+        # Measurands the charger actively reports via MeterValues, per connector.
+        # A connector status (e.g. SuspendedEV) must not overwrite a value the
+        # charger is actually measuring; its MeterValues are the source of truth.
+        self._metervalues_measurands: dict[int, set[str]] = {}
 
         # Connector-aware, but backwards compatible:
         self._metrics: _ConnectorAwareMetrics = _ConnectorAwareMetrics()
@@ -905,6 +909,13 @@ class ChargePoint(cp):
                 phase = sampled_value.phase
                 location = sampled_value.location
                 context = sampled_value.context or ReadingContext.sample_periodic.value
+
+                # Remember which measurands this charger actually reports, so a
+                # later connector status change does not overwrite them.
+                if measurand is not None:
+                    self._metervalues_measurands.setdefault(connector_id, set()).add(
+                        measurand
+                    )
 
                 # Strip the phase tag ONLY if a single-phase charger sends an isolated L1 energy reading.
                 # If multiple phases exist (e.g., L1, L2), leave them intact so process_phases() can sum them.
