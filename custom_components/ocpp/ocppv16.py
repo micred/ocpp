@@ -28,6 +28,7 @@ from ocpp.v16.enums import (
     DataTransferStatus,
     Measurand,
     MessageTrigger,
+    ReadingContext,
     RegistrationStatus,
     RemoteStartStopStatus,
     ResetStatus,
@@ -104,6 +105,10 @@ class ChargePoint(cp):
             charger,
         )
         self._active_tx: dict[int, int] = {}  # connector_id -> transaction_id
+        # connector_id -> device timestamp of the newest applied MeterValues
+        # bucket; buckets older than this are replays from the charger's
+        # offline queue and must not overwrite live metrics
+        self._last_meter_bucket_ts: dict[int, datetime] = {}
 
     async def get_number_of_connectors(self) -> int:
         """Return number of connectors on this charger."""
@@ -949,6 +954,19 @@ class ChargePoint(cp):
             boot_info.get(om.firmware_version.name, None),
         )
 
+    @staticmethod
+    def _parse_bucket_timestamp(raw) -> datetime | None:
+        """Parse a MeterValues bucket timestamp, returning None if unusable."""
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
     @on(Action.meter_values)
     def on_meter_values(self, connector_id: int, meter_value: dict, **kwargs):
         """Request handler for MeterValues Calls (multi-connector aware)."""
@@ -1046,9 +1064,40 @@ class ChargePoint(cp):
             )
 
         meter_values: list[list[MeasurandValue]] = []
+        latest_ts = self._last_meter_bucket_ts.get(connector_id)
         for bucket in meter_value:
+            bucket_ts = self._parse_bucket_timestamp(bucket.get("timestamp"))
+            # Some chargers (e.g. JuiceBox) replay queued MeterValues hours
+            # later, interleaved with live samples; apply by device timestamp,
+            # not arrival order.
+            if bucket_ts is not None and latest_ts is not None and bucket_ts < latest_ts:
+                _LOGGER.debug(
+                    "Ignoring replayed MeterValues bucket on conn %s: %s older than %s",
+                    connector_id,
+                    bucket_ts,
+                    latest_ts,
+                )
+                continue
+            sampled_values = bucket.get(om.sampled_value.name, [])
+            # A Transaction.End snapshot that does not belong to the active
+            # transaction is a replayed (typically zeroed) end-of-session
+            # frame and must not overwrite live metrics.
+            if not transaction_matches and sampled_values:
+                contexts = {
+                    sv.get(om.context.value) for sv in sampled_values
+                }
+                if contexts == {ReadingContext.transaction_end.value}:
+                    _LOGGER.debug(
+                        "Ignoring Transaction.End MeterValues bucket on conn %s "
+                        "without a matching transaction (id=%s)",
+                        connector_id,
+                        transaction_id,
+                    )
+                    continue
+            if bucket_ts is not None:
+                latest_ts = bucket_ts
             measurands: list[MeasurandValue] = []
-            for sampled_value in bucket.get(om.sampled_value.name, []):
+            for sampled_value in sampled_values:
                 measurand = sampled_value.get(om.measurand.value, None)
                 value = sampled_value.get(om.value.value, None)
                 # Where an empty string is supplied convert to 0
@@ -1064,6 +1113,9 @@ class ChargePoint(cp):
                     MeasurandValue(measurand, value, phase, unit, context, location)
                 )
             meter_values.append(measurands)
+
+        if latest_ts is not None:
+            self._last_meter_bucket_ts[connector_id] = latest_ts
 
         self.process_measurands(meter_values, transaction_matches, connector_id)
 
@@ -1094,6 +1146,9 @@ class ChargePoint(cp):
             status=RegistrationStatus.accepted.value,
         )
         self.received_boot_notification = True
+        # A reboot may correct the device clock; drop the replay watermarks so
+        # a backwards clock step cannot lock out future MeterValues.
+        self._last_meter_bucket_ts.clear()
         _LOGGER.debug("Received boot notification for %s: %s", self.id, kwargs)
 
         self.hass.async_create_task(self.async_update_device_info_v16(kwargs))
